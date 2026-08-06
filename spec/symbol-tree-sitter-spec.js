@@ -34,11 +34,14 @@ describe("TreeSitterProvider", () => {
     atom.config.set("language.useTreeSitterParsers", true);
     await atom.packages.activatePackage("language-javascript");
 
-    atom.config.set("symbol-provider-tree-sitter.includeReferences", false);
+    atom.config.set("symbol-tree-sitter.includeReferences", false);
 
     provider = new TreeSitterProvider();
 
-    atom.project.setPaths([temp.mkdirSync("other-dir-"), temp.mkdirSync("atom-symbols-view-")]);
+    atom.project.setPaths([
+      temp.mkdirSync("other-dir-"),
+      temp.mkdirSync("symbol-tree-sitter-spec-"),
+    ]);
 
     directory = atom.project.getDirectories()[1];
     fs.copySync(path.join(__dirname, "fixtures", "js"), atom.project.getPaths()[1]);
@@ -209,7 +212,7 @@ describe("TreeSitterProvider", () => {
     });
 
     it("includes references when they are enabled in settings", async () => {
-      atom.config.set("symbol-provider-tree-sitter.includeReferences", true);
+      atom.config.set("symbol-tree-sitter.includeReferences", true);
       let symbols = await getSymbols(editor, "file");
       expect(symbols.length).toBe(5);
       expect(symbols.map((s) => s.tag)).toEqual(["function", "function", "call", "call", "call"]);

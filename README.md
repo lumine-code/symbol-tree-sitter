@@ -1,6 +1,6 @@
-# symbol-provider-tree-sitter
+# symbol-tree-sitter
 
-Provides symbols to symbols-view based on tree-sitter queries.
+Provides symbols via Tree-sitter tags queries.
 
 ## Features
 
@@ -11,11 +11,11 @@ Provides symbols to symbols-view based on tree-sitter queries.
 
 ## Installation
 
-To install `symbol-provider-tree-sitter` search for _symbol-provider-tree-sitter_ in the Install pane of the Lumine settings or run `lumine --install lumine-code/symbol-provider-tree-sitter`.
+To install `symbol-tree-sitter` search for _symbol-tree-sitter_ in the Install pane of the Lumine settings or run `lumine --install lumine-code/symbol-tree-sitter`.
 
 ## Services
 
-- **symbol.provider** (`1.0.0`): provided to supply symbols for a given file to symbols-view.
+- **symbol.provider** (`1.0.0`): provided to supply symbols for a given file.
 
 ## Contributing
 
