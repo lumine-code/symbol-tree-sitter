@@ -23,7 +23,7 @@
   ],
   "engines": {
     "lumine": "^1.0.0",
-    "node": ">=14"
+    "node": ">=24"
   },
   "scripts": {
     "test": "lumine --test spec",
