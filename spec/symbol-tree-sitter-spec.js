@@ -9,7 +9,7 @@ function scm(strings) {
 }
 
 function getEditor() {
-  return atom.workspace.getActiveTextEditor();
+  return lumine.workspace.getActiveTextEditor();
 }
 
 let provider;
@@ -31,27 +31,27 @@ describe("TreeSitterProvider", () => {
   beforeEach(async () => {
     jasmine.useRealClock();
 
-    atom.config.set("language.useTreeSitterParsers", true);
-    await atom.packages.activatePackage("language-javascript");
+    lumine.config.set("language.useTreeSitterParsers", true);
+    await lumine.packages.activatePackage("language-javascript");
 
-    atom.config.set("symbol-tree-sitter.includeReferences", false);
+    lumine.config.set("symbol-tree-sitter.includeReferences", false);
 
     provider = new TreeSitterProvider();
 
-    atom.project.setPaths([
+    lumine.project.setPaths([
       temp.mkdirSync("other-dir-"),
       temp.mkdirSync("symbol-tree-sitter-spec-"),
     ]);
 
-    directory = atom.project.getDirectories()[1];
-    fs.copySync(path.join(__dirname, "fixtures", "js"), atom.project.getPaths()[1]);
+    directory = lumine.project.getDirectories()[1];
+    fs.copySync(path.join(__dirname, "fixtures", "js"), lumine.project.getPaths()[1]);
 
-    fs.copySync(path.join(__dirname, "fixtures", "ruby"), atom.project.getPaths()[1]);
+    fs.copySync(path.join(__dirname, "fixtures", "ruby"), lumine.project.getPaths()[1]);
   });
 
   describe("when a tree-sitter grammar is used for a file", () => {
     beforeEach(async () => {
-      await atom.workspace.open(directory.resolve("sample.js"));
+      await lumine.workspace.open(directory.resolve("sample.js"));
       editor = getEditor();
       let languageMode = editor.getBuffer().getLanguageMode();
       await languageMode.ready;
@@ -80,8 +80,8 @@ describe("TreeSitterProvider", () => {
 
   describe("when a non-tree-sitter grammar is used for a file", () => {
     beforeEach(async () => {
-      atom.config.set("language.useTreeSitterParsers", false);
-      await atom.workspace.open(directory.resolve("sample.js"));
+      lumine.config.set("language.useTreeSitterParsers", false);
+      await lumine.workspace.open(directory.resolve("sample.js"));
       editor = getEditor();
     });
 
@@ -98,9 +98,9 @@ describe("TreeSitterProvider", () => {
   describe("when the buffer is new and unsaved", () => {
     let grammar;
     beforeEach(async () => {
-      await atom.workspace.open();
+      await lumine.workspace.open();
       editor = getEditor();
-      grammar = atom.grammars.grammarForId("source.js");
+      grammar = lumine.grammars.grammarForId("source.js");
       editor.setGrammar(grammar);
       await editor.getBuffer().getLanguageMode().ready;
     });
@@ -131,8 +131,8 @@ describe("TreeSitterProvider", () => {
 
   describe("when the file has multiple language layers", () => {
     beforeEach(async () => {
-      await atom.packages.activatePackage("language-ruby");
-      await atom.workspace.open(directory.resolve("embed.rb"));
+      await lumine.packages.activatePackage("language-ruby");
+      await lumine.workspace.open(directory.resolve("embed.rb"));
       editor = getEditor();
       await editor.getBuffer().getLanguageMode().ready;
     });
@@ -151,7 +151,7 @@ describe("TreeSitterProvider", () => {
   describe("when the tags query contains @definition captures", () => {
     let grammar;
     beforeEach(async () => {
-      await atom.workspace.open(directory.resolve("sample.js"));
+      await lumine.workspace.open(directory.resolve("sample.js"));
       editor = getEditor();
       let languageMode = editor.getBuffer().getLanguageMode();
       await languageMode.ready;
@@ -183,7 +183,7 @@ describe("TreeSitterProvider", () => {
   describe("when the tags query contains @reference captures", () => {
     let grammar;
     beforeEach(async () => {
-      await atom.workspace.open(directory.resolve("sample.js"));
+      await lumine.workspace.open(directory.resolve("sample.js"));
       editor = getEditor();
       let languageMode = editor.getBuffer().getLanguageMode();
       await languageMode.ready;
@@ -212,7 +212,7 @@ describe("TreeSitterProvider", () => {
     });
 
     it("includes references when they are enabled in settings", async () => {
-      atom.config.set("symbol-tree-sitter.includeReferences", true);
+      lumine.config.set("symbol-tree-sitter.includeReferences", true);
       let symbols = await getSymbols(editor, "file");
       expect(symbols.length).toBe(5);
       expect(symbols.map((s) => s.tag)).toEqual(["function", "function", "call", "call", "call"]);
@@ -222,7 +222,7 @@ describe("TreeSitterProvider", () => {
   describe("when the tags query uses the predicate", () => {
     let grammar;
     beforeEach(async () => {
-      await atom.workspace.open(directory.resolve("sample.js"));
+      await lumine.workspace.open(directory.resolve("sample.js"));
       editor = getEditor();
       let languageMode = editor.getBuffer().getLanguageMode();
       await languageMode.ready;
