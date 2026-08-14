@@ -11,11 +11,11 @@ Provides symbols via Tree-sitter tags queries.
 
 ## Installation
 
-To install `symbol-tree-sitter` search for _symbol-tree-sitter_ in the Install pane of the Lumine settings or run `lumine --install lumine-code/symbol-tree-sitter`.
+To install `symbol-tree-sitter` search for it in the Install pane of the Lumine settings, or run the command `lumine --install lumine-code/symbol-tree-sitter`.
 
 ## Services
 
-- **symbol.provider** (`1.0.0`): provided to supply symbols for a given file.
+- `symbol.provider`: provided to supply symbols for a given file.
 
 ## Contributing
 
