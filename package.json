@@ -25,6 +25,9 @@
     "lumine": "^1.0.0",
     "node": ">=24"
   },
+  "specPackages": [
+    "language-ruby"
+  ],
   "scripts": {
     "test": "lumine --test spec",
     "lint": "eslint . --max-warnings 0",
