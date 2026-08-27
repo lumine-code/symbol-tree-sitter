@@ -31,7 +31,7 @@ describe("TreeSitterProvider", () => {
   beforeEach(async () => {
     jasmine.useRealClock();
 
-    lumine.config.set("language.useTreeSitterParsers", true);
+    lumine.config.set("editor.useTreeSitterParsers", true);
     await lumine.packages.activatePackage("language-javascript");
 
     lumine.config.set("symbol-tree-sitter.includeReferences", false);
@@ -80,7 +80,7 @@ describe("TreeSitterProvider", () => {
 
   describe("when a non-tree-sitter grammar is used for a file", () => {
     beforeEach(async () => {
-      lumine.config.set("language.useTreeSitterParsers", false);
+      lumine.config.set("editor.useTreeSitterParsers", false);
       await lumine.workspace.open(directory.resolve("sample.js"));
       editor = getEditor();
     });
