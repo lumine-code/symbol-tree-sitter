@@ -50,7 +50,7 @@ describe("TreeSitterProvider", () => {
     let layers = [];
     const languageMode = {
       ready,
-      rootLanguageLayer: null,
+      rootLanguageLayer: { ready: false },
       atTransactionEnd() {},
       getAllLanguageLayers(predicate) {
         return layers.filter(predicate);
@@ -64,7 +64,7 @@ describe("TreeSitterProvider", () => {
 
     expect(provider.canProvideSymbols({ type: "file", editor })).toBe(false);
     expect(provider.canProvideSymbols({ type: "file", editor })).toBe(false);
-    languageMode.rootLanguageLayer = {};
+    languageMode.rootLanguageLayer.ready = true;
     layers = [{ queries: { tagsQuery: {} } }];
     resolveReady();
     await ready;
