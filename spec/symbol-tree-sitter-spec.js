@@ -28,6 +28,22 @@ async function getSymbols(editor, type = "file") {
 describe("TreeSitterProvider", () => {
   let directory, editor;
 
+  it("ignores a transient null language layer while the grammar rebuilds", () => {
+    const editor = {
+      getBuffer: () => ({
+        getLanguageMode: () => ({
+          atTransactionEnd() {},
+          getAllLanguageLayers(predicate) {
+            return [null, { queries: { tagsQuery: {} } }].filter(predicate);
+          },
+        }),
+      }),
+    };
+    const provider = new TreeSitterProvider();
+    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(0.999);
+    provider.destroy();
+  });
+
   beforeEach(async () => {
     jasmine.useRealClock();
 
