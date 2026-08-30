@@ -44,6 +44,39 @@ describe("TreeSitterProvider", () => {
     provider.destroy();
   });
 
+  it("invalidates a restored editor once its language mode is ready", async () => {
+    let resolveReady;
+    const ready = new Promise((resolve) => (resolveReady = resolve));
+    let layers = [];
+    const languageMode = {
+      ready,
+      rootLanguageLayer: null,
+      atTransactionEnd() {},
+      getAllLanguageLayers(predicate) {
+        return layers.filter(predicate);
+      },
+    };
+    const buffer = { getLanguageMode: () => languageMode };
+    const editor = { getBuffer: () => buffer };
+    const provider = new TreeSitterProvider();
+    const events = [];
+    provider.onShouldClearCache((event) => events.push(event));
+
+    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(false);
+    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(false);
+    languageMode.rootLanguageLayer = {};
+    layers = [{ queries: { tagsQuery: {} } }];
+    resolveReady();
+    await ready;
+    await Promise.resolve();
+
+    expect(events).toEqual([{ editor }]);
+    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(0.999);
+    await Promise.resolve();
+    expect(events.length).toBe(1);
+    provider.destroy();
+  });
+
   beforeEach(async () => {
     jasmine.useRealClock();
 
