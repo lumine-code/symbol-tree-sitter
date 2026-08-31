@@ -77,6 +77,26 @@ describe("TreeSitterProvider", () => {
     provider.destroy();
   });
 
+  it("claims a restored editor from the grammar declaration while queries compile", () => {
+    const languageMode = {
+      grammar: { queryPaths: { tagsQuery: "queries/tags.scm" } },
+      rootLanguageLayer: null,
+      atTransactionEnd() {},
+      getAllLanguageLayers() {
+        return [];
+      },
+    };
+    const buffer = { getLanguageMode: () => languageMode };
+    const editor = { getBuffer: () => buffer };
+    const provider = new TreeSitterProvider();
+    const invalidate = jasmine.createSpy("invalidate");
+    provider.onShouldClearCache(invalidate);
+
+    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(0.999);
+    expect(invalidate).not.toHaveBeenCalled();
+    provider.destroy();
+  });
+
   beforeEach(async () => {
     jasmine.useRealClock();
 
