@@ -32,10 +32,9 @@ describe("TreeSitterProvider", () => {
     const editor = {
       getBuffer: () => ({
         getLanguageMode: () => ({
-          atTransactionEnd() {},
-          getAllLanguageLayers(predicate) {
-            return [null, { queries: { tagsQuery: {} } }].filter(predicate);
-          },
+          getQueryCaptureGroups() {},
+          hasQuery: () => true,
+          isTokenized: () => true,
         }),
       }),
     };
@@ -47,14 +46,12 @@ describe("TreeSitterProvider", () => {
   it("invalidates a restored editor once its language mode is ready", async () => {
     let resolveReady;
     const ready = new Promise((resolve) => (resolveReady = resolve));
-    let layers = [];
+    let hasTagsQuery = false;
     const languageMode = {
       ready,
-      rootLanguageLayer: { ready: false },
-      atTransactionEnd() {},
-      getAllLanguageLayers(predicate) {
-        return layers.filter(predicate);
-      },
+      getQueryCaptureGroups() {},
+      hasQuery: () => hasTagsQuery,
+      isTokenized: () => hasTagsQuery,
     };
     const buffer = { getLanguageMode: () => languageMode };
     const editor = { getBuffer: () => buffer };
@@ -64,8 +61,7 @@ describe("TreeSitterProvider", () => {
 
     expect(provider.canProvideSymbols({ type: "file", editor })).toBe(false);
     expect(provider.canProvideSymbols({ type: "file", editor })).toBe(false);
-    languageMode.rootLanguageLayer.ready = true;
-    layers = [{ queries: { tagsQuery: {} } }];
+    hasTagsQuery = true;
     resolveReady();
     await ready;
     await Promise.resolve();
@@ -79,12 +75,9 @@ describe("TreeSitterProvider", () => {
 
   it("claims a restored editor from the grammar declaration while queries compile", () => {
     const languageMode = {
-      grammar: { queryPaths: { tagsQuery: "queries/tags.scm" } },
-      rootLanguageLayer: null,
-      atTransactionEnd() {},
-      getAllLanguageLayers() {
-        return [];
-      },
+      getQueryCaptureGroups() {},
+      hasQuery: () => true,
+      isTokenized: () => false,
     };
     const buffer = { getLanguageMode: () => languageMode };
     const editor = { getBuffer: () => buffer };
@@ -100,11 +93,9 @@ describe("TreeSitterProvider", () => {
   it("declines a Tree-sitter language mode with no tags query", () => {
     const languageMode = {
       ready: Promise.resolve(),
-      rootLanguageLayer: { ready: true },
-      atTransactionEnd() {},
-      getAllLanguageLayers(predicate) {
-        return [{ queries: {} }].filter(predicate);
-      },
+      getQueryCaptureGroups() {},
+      hasQuery: () => false,
+      isTokenized: () => true,
     };
     const editor = { getBuffer: () => ({ getLanguageMode: () => languageMode }) };
     const provider = new TreeSitterProvider();
@@ -580,10 +571,10 @@ describe("TreeSitterProvider", () => {
               (variable_declarator
                 name: (identifier) @name
                 value: [(arrow_function) (function_expression)]))
-                (#set! test.onlyIfDescendantOfType function_expression)
+                (#is? test.descendantOfType function_expression)
                 (#set! symbol.prependTextForNode "parent.parent.parent.parent.parent.firstNamedChild")
                 (#set! symbol.joiner ".")
-                (#set! test.final true)
+                (#set! capture.final true)
           )
           (
             (variable_declaration
@@ -616,9 +607,9 @@ describe("TreeSitterProvider", () => {
               (variable_declarator
                 name: (identifier) @name
                 value: [(arrow_function) (function_expression)]))
-                (#set! test.onlyIfNotDescendantOfType function_expression)
+                (#is-not? test.descendantOfType function_expression)
                 (#set! symbol.prepend "ROOT: ")
-                (#set! test.final true)
+                (#set! capture.final true)
           )
           ; …which the inner function picks up on.
           (
@@ -626,10 +617,10 @@ describe("TreeSitterProvider", () => {
               (variable_declarator
                 name: (identifier) @name
                 value: [(arrow_function) (function_expression)]))
-                (#set! test.onlyIfDescendantOfType function_expression)
+                (#is? test.descendantOfType function_expression)
                 (#set! symbol.prependSymbolForNode "parent.parent.parent.parent.parent.firstNamedChild")
                 (#set! symbol.joiner ".")
-                (#set! test.final true)
+                (#set! capture.final true)
           )
         `,
         );
