@@ -97,10 +97,25 @@ describe("TreeSitterProvider", () => {
     provider.destroy();
   });
 
+  it("declines a Tree-sitter language mode with no tags query", () => {
+    const languageMode = {
+      ready: Promise.resolve(),
+      rootLanguageLayer: { ready: true },
+      atTransactionEnd() {},
+      getAllLanguageLayers(predicate) {
+        return [{ queries: {} }].filter(predicate);
+      },
+    };
+    const editor = { getBuffer: () => ({ getLanguageMode: () => languageMode }) };
+    const provider = new TreeSitterProvider();
+
+    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(false);
+    provider.destroy();
+  });
+
   beforeEach(async () => {
     jasmine.useRealClock();
 
-    lumine.config.set("editor.useTreeSitterParsers", true);
     await lumine.packages.activatePackage("language-javascript");
 
     lumine.config.set("symbol-tree-sitter.includeReferences", false);
@@ -147,22 +162,19 @@ describe("TreeSitterProvider", () => {
     });
   });
 
-  describe("when a non-tree-sitter grammar is used for a file", () => {
+  describe("when the parserless sentinel grammar is used for a file", () => {
     beforeEach(async () => {
-      lumine.config.set("editor.useTreeSitterParsers", false);
       await lumine.workspace.open(directory.resolve("sample.js"));
       editor = getEditor();
+      editor.setGrammar(lumine.grammars.nullGrammar);
     });
 
     it("is not willing to provide symbols for the current file", () => {
-      expect(editor.getGrammar().rootLanguageLayer).toBe(undefined);
+      expect(editor.getGrammar()).toBe(lumine.grammars.nullGrammar);
       let meta = { type: "file", editor };
       expect(provider.canProvideSymbols(meta)).toBe(false);
     });
   });
-
-  // TODO: Test that `canProvideSymbols` returns `false` when no layer has a
-  // tags query.
 
   describe("when the buffer is new and unsaved", () => {
     let grammar;

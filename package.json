@@ -26,6 +26,7 @@
     "node": ">=24"
   },
   "specPackages": [
+    "language-javascript",
     "language-ruby"
   ],
   "scripts": {
