@@ -28,79 +28,447 @@ async function getSymbols(editor, type = "file") {
 describe("TreeSitterProvider", () => {
   let directory, editor;
 
-  it("ignores a transient null language layer while the grammar rebuilds", () => {
+  afterEach(() => {
+    provider?.destroy();
+    provider = null;
+  });
+
+  it("uses only the public editor grammar-query facade", () => {
+    const grammar = {};
     const editor = {
-      getBuffer: () => ({
-        getLanguageMode: () => ({
-          getQueryCaptureGroups() {},
-          hasQuery: () => true,
-          isTokenized: () => true,
-        }),
-      }),
+      getBuffer() {
+        throw new Error("must not inspect the language mode");
+      },
+      hasGrammarQuery: () => true,
+      getGrammar: () => grammar,
+      getGrammarQueryCaptureGroups() {},
+      whenGrammarSettled() {},
     };
     const provider = new TreeSitterProvider();
     expect(provider.canProvideSymbols({ type: "file", editor })).toBe(0.999);
     provider.destroy();
   });
 
-  it("invalidates a restored editor once its language mode is ready", async () => {
-    let resolveReady;
-    const ready = new Promise((resolve) => (resolveReady = resolve));
+  it("invalidates a cold editor once an injected tags query appears", async () => {
+    let resolveSettlement;
+    const settlement = new Promise((resolve) => (resolveSettlement = resolve));
     let hasTagsQuery = false;
-    const languageMode = {
-      ready,
-      getQueryCaptureGroups() {},
-      hasQuery: () => hasTagsQuery,
-      isTokenized: () => hasTagsQuery,
+    const grammar = {};
+    const editor = {
+      hasGrammarQuery: () => hasTagsQuery,
+      getGrammar: () => grammar,
+      getGrammarQueryCaptureGroups() {},
+      whenGrammarSettled: jasmine.createSpy("whenGrammarSettled").and.returnValue(settlement),
     };
-    const buffer = { getLanguageMode: () => languageMode };
-    const editor = { getBuffer: () => buffer };
     const provider = new TreeSitterProvider();
     const events = [];
     provider.onShouldClearCache((event) => events.push(event));
 
     expect(provider.canProvideSymbols({ type: "file", editor })).toBe(false);
     expect(provider.canProvideSymbols({ type: "file", editor })).toBe(false);
+    expect(editor.whenGrammarSettled).toHaveBeenCalledTimes(1);
     hasTagsQuery = true;
-    resolveReady();
-    await ready;
+    resolveSettlement(true);
+    await settlement;
     await Promise.resolve();
 
     expect(events).toEqual([{ editor }]);
     expect(provider.canProvideSymbols({ type: "file", editor })).toBe(0.999);
-    await Promise.resolve();
     expect(events.length).toBe(1);
     provider.destroy();
   });
 
-  it("claims a restored editor from the grammar declaration while queries compile", () => {
-    const languageMode = {
-      getQueryCaptureGroups() {},
-      hasQuery: () => true,
-      isTokenized: () => false,
+  it("claims a root tags-query declaration before its grammar settles", () => {
+    const grammar = {};
+    const editor = {
+      hasGrammarQuery: () => true,
+      getGrammar: () => grammar,
+      getGrammarQueryCaptureGroups() {},
+      whenGrammarSettled: jasmine.createSpy("whenGrammarSettled"),
     };
-    const buffer = { getLanguageMode: () => languageMode };
-    const editor = { getBuffer: () => buffer };
+    const provider = new TreeSitterProvider();
+
+    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(0.999);
+    expect(editor.whenGrammarSettled).not.toHaveBeenCalled();
+    provider.destroy();
+  });
+
+  it("deduplicates only an in-flight no-query wait and watches the same grammar again", async () => {
+    let hasTagsQuery = false;
+    const grammar = {};
+    const waits = [];
+    const whenGrammarSettled = jasmine.createSpy("whenGrammarSettled").and.callFake(
+      ({ signal }) =>
+        new Promise((resolve) => {
+          waits.push({ resolve, signal });
+          signal.addEventListener("abort", () => resolve(false), { once: true });
+        }),
+    );
+    const editor = {
+      hasGrammarQuery: () => hasTagsQuery,
+      getGrammar: () => grammar,
+      getGrammarQueryCaptureGroups() {},
+      whenGrammarSettled,
+    };
     const provider = new TreeSitterProvider();
     const invalidate = jasmine.createSpy("invalidate");
     provider.onShouldClearCache(invalidate);
 
-    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(0.999);
+    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(false);
+    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(false);
+    expect(whenGrammarSettled).toHaveBeenCalledTimes(1);
+    waits[0].resolve(true);
+    await Promise.resolve();
+    await Promise.resolve();
     expect(invalidate).not.toHaveBeenCalled();
+
+    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(false);
+    expect(whenGrammarSettled).toHaveBeenCalledTimes(2);
+    hasTagsQuery = true;
+    waits[1].resolve(true);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(invalidate).toHaveBeenCalledOnceWith({ editor });
+    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(0.999);
     provider.destroy();
   });
 
-  it("declines a Tree-sitter language mode with no tags query", () => {
-    const languageMode = {
-      ready: Promise.resolve(),
-      getQueryCaptureGroups() {},
-      hasQuery: () => false,
-      isTokenized: () => true,
+  it("does not watch a null grammar or restart after provider destruction", () => {
+    const whenGrammarSettled = jasmine.createSpy("whenGrammarSettled");
+    const editor = {
+      hasGrammarQuery: () => false,
+      getGrammar: () => lumine.grammars.nullGrammar,
+      getGrammarQueryCaptureGroups() {},
+      whenGrammarSettled,
     };
-    const editor = { getBuffer: () => ({ getLanguageMode: () => languageMode }) };
     const provider = new TreeSitterProvider();
 
     expect(provider.canProvideSymbols({ type: "file", editor })).toBe(false);
+    expect(whenGrammarSettled).not.toHaveBeenCalled();
+    provider.destroy();
+    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(false);
+    expect(whenGrammarSettled).not.toHaveBeenCalled();
+  });
+
+  it("watches again when the root grammar identity changes", async () => {
+    let grammar = {};
+    const whenGrammarSettled = jasmine.createSpy("whenGrammarSettled").and.resolveTo(true);
+    const editor = {
+      hasGrammarQuery: () => false,
+      getGrammar: () => grammar,
+      getGrammarQueryCaptureGroups() {},
+      whenGrammarSettled,
+    };
+    const provider = new TreeSitterProvider();
+
+    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(false);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(whenGrammarSettled).toHaveBeenCalledTimes(1);
+
+    grammar = {};
+    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(false);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(whenGrammarSettled).toHaveBeenCalledTimes(2);
+    provider.destroy();
+  });
+
+  it("replaces an in-flight waiter when the root grammar identity changes", async () => {
+    const grammarA = {};
+    const grammarB = {};
+    let grammar = grammarA;
+    let hasTagsQuery = false;
+    const waits = [];
+    const editor = {
+      hasGrammarQuery: () => hasTagsQuery,
+      getGrammar: () => grammar,
+      getGrammarQueryCaptureGroups() {},
+      whenGrammarSettled({ signal }) {
+        return new Promise((resolve) => {
+          const wait = { grammar, resolve, signal };
+          waits.push(wait);
+          signal.addEventListener("abort", () => resolve(false), { once: true });
+        });
+      },
+    };
+    const provider = new TreeSitterProvider();
+    const events = [];
+    provider.onShouldClearCache((event) => events.push(event));
+
+    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(false);
+    expect(waits.length).toBe(1);
+    expect(waits[0].grammar).toBe(grammarA);
+
+    grammar = grammarB;
+    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(false);
+    expect(waits.length).toBe(2);
+    expect(waits[0].signal.aborted).toBe(true);
+    expect(waits[1].grammar).toBe(grammarB);
+
+    hasTagsQuery = true;
+    waits[1].resolve(true);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(events).toEqual([{ editor }]);
+    expect(provider.pendingGrammarSettlements.size).toBe(0);
+    provider.destroy();
+  });
+
+  it("restarts an in-flight waiter when the grammar registry invalidates the same root", async () => {
+    let grammarAdded;
+    const grammarSubscription = { dispose: jasmine.createSpy("grammar subscription dispose") };
+    spyOn(lumine.grammars, "onDidAddGrammar").and.callFake((callback) => {
+      grammarAdded = callback;
+      return grammarSubscription;
+    });
+
+    const grammar = {};
+    let hasTagsQuery = false;
+    const waits = [];
+    const editor = {
+      hasGrammarQuery: () => hasTagsQuery,
+      getGrammar: () => grammar,
+      getGrammarQueryCaptureGroups() {},
+      whenGrammarSettled({ signal }) {
+        return new Promise((resolve) => {
+          waits.push({ resolve, signal });
+          signal.addEventListener("abort", () => resolve(false), { once: true });
+        });
+      },
+    };
+    const provider = new TreeSitterProvider();
+    const events = [];
+    provider.onShouldClearCache((event) => {
+      events.push(event);
+      if (event.provider === provider) {
+        provider.canProvideSymbols({ type: "file", editor });
+      }
+    });
+
+    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(false);
+    expect(waits.length).toBe(1);
+
+    grammarAdded();
+    expect(waits[0].signal.aborted).toBe(true);
+    expect(waits.length).toBe(2);
+
+    hasTagsQuery = true;
+    waits[1].resolve(true);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(events).toEqual([{ provider }, { editor }]);
+    expect(provider.pendingGrammarSettlements.size).toBe(0);
+    provider.destroy();
+    expect(grammarSubscription.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("invalidates the provider for grammar add, update, and removal", async () => {
+    const callbacks = {};
+    const listenerDisposables = {};
+    for (const [methodName, eventName] of [
+      ["onDidAddGrammar", "add"],
+      ["onDidUpdateGrammar", "update"],
+      ["onDidRemoveGrammar", "remove"],
+    ]) {
+      listenerDisposables[eventName] = { dispose: jasmine.createSpy(`${eventName} dispose`) };
+      spyOn(lumine.grammars, methodName).and.callFake((callback) => {
+        callbacks[eventName] = callback;
+        return listenerDisposables[eventName];
+      });
+    }
+
+    const grammar = {};
+    let hasTagsQuery = false;
+    const editor = {
+      hasGrammarQuery: () => hasTagsQuery,
+      getGrammar: () => grammar,
+      getGrammarQueryCaptureGroups() {},
+      whenGrammarSettled: () => Promise.resolve(true),
+    };
+    const provider = new TreeSitterProvider();
+    const events = [];
+    provider.onShouldClearCache((event) => events.push(event));
+
+    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(false);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(provider.pendingGrammarSettlements.size).toBe(0);
+
+    hasTagsQuery = true;
+    callbacks.add();
+    expect(events).toEqual([{ provider }]);
+    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(0.999);
+
+    callbacks.update();
+    callbacks.remove();
+    expect(events).toEqual([{ provider }, { provider }, { provider }]);
+
+    provider.destroy();
+    for (const disposable of Object.values(listenerDisposables)) {
+      expect(disposable.dispose).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("aborts a pending cold-start watch when destroyed", async () => {
+    let watchedSignal;
+    let settlementPromise;
+    const grammar = {};
+    const editor = {
+      hasGrammarQuery: () => false,
+      getGrammar: () => grammar,
+      getGrammarQueryCaptureGroups() {},
+      whenGrammarSettled({ signal }) {
+        watchedSignal = signal;
+        settlementPromise = new Promise((resolve) => {
+          signal.addEventListener("abort", () => resolve(false), { once: true });
+        });
+        return settlementPromise;
+      },
+    };
+    const provider = new TreeSitterProvider();
+    const invalidate = jasmine.createSpy("invalidate");
+    provider.onShouldClearCache(invalidate);
+
+    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(false);
+    provider.destroy();
+    await settlementPromise;
+    await Promise.resolve();
+
+    expect(watchedSignal.aborted).toBe(true);
+    expect(invalidate).not.toHaveBeenCalled();
+    expect(provider.pendingGrammarSettlements.size).toBe(0);
+  });
+
+  it("does not invalidate when the grammar changes during a cold-start watch", async () => {
+    let resolveSettlement;
+    let hasTagsQuery = false;
+    let grammar = {};
+    const editor = {
+      hasGrammarQuery: () => hasTagsQuery,
+      getGrammar: () => grammar,
+      getGrammarQueryCaptureGroups() {},
+      whenGrammarSettled: () =>
+        new Promise((resolve) => {
+          resolveSettlement = resolve;
+        }),
+    };
+    const provider = new TreeSitterProvider();
+    const invalidate = jasmine.createSpy("invalidate");
+    provider.onShouldClearCache(invalidate);
+
+    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(false);
+    hasTagsQuery = true;
+    grammar = {};
+    resolveSettlement(false);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(invalidate).not.toHaveBeenCalled();
+    expect(provider.pendingGrammarSettlements.size).toBe(0);
+    provider.destroy();
+  });
+
+  it("passes the abort signal to capture collection", async () => {
+    const controller = new AbortController();
+    const whenGrammarSettled = jasmine.createSpy("whenGrammarSettled").and.resolveTo(true);
+    let finishCaptures;
+    const getGrammarQueryCaptureGroups = jasmine
+      .createSpy("getGrammarQueryCaptureGroups")
+      .and.callFake(
+        (_queryType, { signal }) =>
+          new Promise((resolve) => {
+            signal.addEventListener("abort", () => resolve([]), { once: true });
+            finishCaptures = resolve;
+          }),
+      );
+    const editor = {
+      hasGrammarQuery: () => true,
+      getGrammarQueryCaptureGroups,
+      whenGrammarSettled,
+    };
+    const provider = new TreeSitterProvider();
+
+    const symbolsPromise = provider.getSymbols({
+      type: "file",
+      editor,
+      signal: controller.signal,
+    });
+    expect(finishCaptures).toBeDefined();
+    controller.abort();
+
+    await expectAsync(symbolsPromise).toBeResolvedTo(null);
+    expect(whenGrammarSettled).not.toHaveBeenCalled();
+    expect(getGrammarQueryCaptureGroups).toHaveBeenCalledWith("tagsQuery", {
+      signal: controller.signal,
+    });
+    provider.destroy();
+  });
+
+  it("does not publish capture groups invalidated by a grammar change", async () => {
+    let grammarGeneration = 0;
+    let finishCaptureRequest;
+    const editor = {
+      hasGrammarQuery: () => true,
+      whenGrammarSettled: () => Promise.resolve(true),
+      getGrammarQueryCaptureGroups() {
+        const requestedGeneration = grammarGeneration;
+        return new Promise((resolve) => {
+          finishCaptureRequest = () => {
+            resolve(requestedGeneration === grammarGeneration ? [{ captures: [{}] }] : []);
+          };
+        });
+      },
+    };
+    const provider = new TreeSitterProvider();
+    spyOn(provider.captureOrganizer, "process").and.returnValue([
+      { name: "stale", position: { compare: () => 0 } },
+    ]);
+    const controller = new AbortController();
+
+    const symbolsPromise = provider.getSymbols({
+      type: "file",
+      editor,
+      signal: controller.signal,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    grammarGeneration++;
+    finishCaptureRequest();
+
+    await expectAsync(symbolsPromise).toBeResolvedTo(null);
+    expect(provider.captureOrganizer.process).not.toHaveBeenCalled();
+    provider.destroy();
+  });
+
+  it("collects captures from root and injected grammar groups", async () => {
+    const rootSymbol = { name: "root", position: { compare: () => -1 } };
+    const injectedSymbol = { name: "injected", position: { compare: () => 1 } };
+    const rootCaptures = [{ symbol: rootSymbol }];
+    const injectedCaptures = [{ symbol: injectedSymbol }];
+    const editor = {
+      getGrammarQueryCaptureGroups: () =>
+        Promise.resolve([{ captures: injectedCaptures }, { captures: rootCaptures }]),
+    };
+    const provider = new TreeSitterProvider();
+    spyOn(provider.captureOrganizer, "process").and.callFake((captures) =>
+      captures.map(({ symbol }) => symbol),
+    );
+
+    const symbols = await provider.getSymbols({
+      type: "file",
+      editor,
+      signal: new AbortController().signal,
+    });
+
+    expect(provider.captureOrganizer.process.calls.allArgs()).toEqual([
+      [injectedCaptures],
+      [rootCaptures],
+    ]);
+    expect(symbols).toEqual([rootSymbol, injectedSymbol]);
     provider.destroy();
   });
 
@@ -128,8 +496,7 @@ describe("TreeSitterProvider", () => {
     beforeEach(async () => {
       await lumine.workspace.open(directory.resolve("sample.js"));
       editor = getEditor();
-      let languageMode = editor.getBuffer().getLanguageMode();
-      await languageMode.ready;
+      await editor.whenGrammarSettled();
     });
 
     it("is willing to provide symbols for the current file", () => {
@@ -174,7 +541,7 @@ describe("TreeSitterProvider", () => {
       editor = getEditor();
       grammar = lumine.grammars.grammarForId("source.js");
       editor.setGrammar(grammar);
-      await editor.getBuffer().getLanguageMode().ready;
+      await editor.whenGrammarSettled();
     });
 
     it("is willing to provide symbols", () => {
@@ -186,7 +553,7 @@ describe("TreeSitterProvider", () => {
       beforeEach(async () => {
         let text = fs.readFileSync(path.join(__dirname, "fixtures", "js", "sample.js")).toString();
         editor.setText(text);
-        await editor.getBuffer().getLanguageMode().atTransactionEnd();
+        await editor.whenGrammarSettled();
       });
 
       it("provides symbols just as if the file were saved on disk", async () => {
@@ -206,10 +573,16 @@ describe("TreeSitterProvider", () => {
       await lumine.packages.activatePackage("language-ruby");
       await lumine.workspace.open(directory.resolve("embed.rb"));
       editor = getEditor();
-      await editor.getBuffer().getLanguageMode().ready;
+      await editor.whenGrammarSettled();
     });
 
     it("detects symbols across several layers", async () => {
+      expect(editor.hasGrammarQuery("tagsQuery")).toBe(true);
+      const groups = await editor.getGrammarQueryCaptureGroups("tagsQuery");
+      expect(groups.map(({ grammar }) => grammar.scopeName)).toEqual(
+        jasmine.arrayWithExactContents(["source.ruby", "source.js"]),
+      );
+
       let symbols = await getSymbols(editor, "file");
 
       expect(symbols[0].name).toBe("foo");
@@ -225,8 +598,7 @@ describe("TreeSitterProvider", () => {
     beforeEach(async () => {
       await lumine.workspace.open(directory.resolve("sample.js"));
       editor = getEditor();
-      let languageMode = editor.getBuffer().getLanguageMode();
-      await languageMode.ready;
+      await editor.whenGrammarSettled();
       grammar = editor.getGrammar();
       await grammar.setQueryForTest(
         "tagsQuery",
@@ -257,8 +629,7 @@ describe("TreeSitterProvider", () => {
     beforeEach(async () => {
       await lumine.workspace.open(directory.resolve("sample.js"));
       editor = getEditor();
-      let languageMode = editor.getBuffer().getLanguageMode();
-      await languageMode.ready;
+      await editor.whenGrammarSettled();
       grammar = editor.getGrammar();
       await grammar.setQueryForTest(
         "tagsQuery",
@@ -296,8 +667,7 @@ describe("TreeSitterProvider", () => {
     beforeEach(async () => {
       await lumine.workspace.open(directory.resolve("sample.js"));
       editor = getEditor();
-      let languageMode = editor.getBuffer().getLanguageMode();
-      await languageMode.ready;
+      await editor.whenGrammarSettled();
       grammar = editor.getGrammar();
     });
 
