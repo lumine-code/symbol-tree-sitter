@@ -472,6 +472,26 @@ describe("TreeSitterProvider", () => {
     provider.destroy();
   });
 
+  it("collects a file with more symbols than the function argument limit", async () => {
+    const { Point } = require("lumine");
+    const expected = Array.from({ length: 200000 }, (_, row) => ({
+      name: `command-${row}`,
+      position: new Point(row, 0),
+    }));
+    const editor = {
+      getGrammarQueryCaptureGroups: () => Promise.resolve([{ captures: [] }]),
+    };
+    const provider = new TreeSitterProvider();
+    spyOn(provider.captureOrganizer, "process").and.returnValue(expected);
+
+    const symbols = await provider.getSymbols({ editor });
+
+    expect(symbols.length).toBe(expected.length);
+    expect(symbols[0]).toBe(expected[0]);
+    expect(symbols.at(-1)).toBe(expected.at(-1));
+    provider.destroy();
+  });
+
   beforeEach(async () => {
     jasmine.useRealClock();
 
