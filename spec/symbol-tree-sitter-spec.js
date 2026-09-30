@@ -565,6 +565,14 @@ describe("TreeSitterProvider", () => {
     let changed;
     let signal;
     const visited = new Set();
+    const outerController = new AbortController();
+    const invalidations = [];
+    provider.onShouldClearCache((event) => {
+      invalidations.push(event);
+      // The symbol hub withdraws the outer request before accepting a result
+      // from the stale generation. A null answer is valid only after that.
+      outerController.abort();
+    });
     const editor = {
       onDidChange(callback) {
         changed = callback;
@@ -591,12 +599,14 @@ describe("TreeSitterProvider", () => {
       },
     };
 
-    const request = provider.getSymbols({ editor });
+    const request = provider.getSymbols({ editor, signal: outerController.signal });
     setImmediate(() => changed());
 
     await expectAsync(request).toBeResolvedTo(null);
     expect(visited.size).toBeGreaterThan(0);
     expect(visited.size).toBeLessThan(4096);
+    expect(outerController.signal.aborted).toBe(true);
+    expect(invalidations).toEqual([{ editor }]);
     expect(provider.pendingSymbolRequests.size).toBe(0);
   });
 
