@@ -402,9 +402,9 @@ describe("TreeSitterProvider", () => {
 
     await expectAsync(symbolsPromise).toBeResolvedTo(null);
     expect(whenGrammarSettled).not.toHaveBeenCalled();
-    expect(getGrammarQueryCaptureGroups).toHaveBeenCalledWith("tagsQuery", {
-      signal: controller.signal,
-    });
+    const [queryType, options] = getGrammarQueryCaptureGroups.calls.mostRecent().args;
+    expect(queryType).toBe("tagsQuery");
+    expect(options.signal.aborted).toBe(true);
     provider.destroy();
   });
 
@@ -490,6 +490,114 @@ describe("TreeSitterProvider", () => {
     expect(symbols[0]).toBe(expected[0]);
     expect(symbols.at(-1)).toBe(expected.at(-1));
     provider.destroy();
+  });
+
+  for (const event of ["onDidChange", "onDidChangeGrammar", "onDidDestroy"]) {
+    it(`discards a request invalidated by ${event} before reading captured nodes`, async () => {
+      let cancel;
+      let finishCaptures;
+      let requestedSignal;
+      const disposed = jasmine.createSpy("dispose");
+      const editor = {
+        [event](callback) {
+          cancel = callback;
+          return { dispose: disposed };
+        },
+        getGrammarQueryCaptureGroups(_queryType, { signal }) {
+          requestedSignal = signal;
+          return new Promise((resolve) => (finishCaptures = resolve));
+        },
+      };
+      const request = provider.getSymbols({ editor });
+      cancel();
+      finishCaptures([
+        {
+          captures: [
+            {
+              get node() {
+                throw new Error("stale node");
+              },
+            },
+          ],
+        },
+      ]);
+
+      await expectAsync(request).toBeResolvedTo(null);
+      expect(requestedSignal.aborted).toBe(true);
+      expect(disposed).toHaveBeenCalledTimes(1);
+    });
+  }
+
+  it("keeps overlapping large editor requests in separate organizers", async () => {
+    const { Point, Range } = require("lumine");
+    const editorFor = (prefix) => ({
+      getGrammarQueryCaptureGroups: () =>
+        Promise.resolve([
+          {
+            captures: Array.from({ length: 4096 }, (_, row) => ({
+              name: "name",
+              node: {
+                id: row,
+                text: `${prefix}${row}`,
+                range: new Range(new Point(row, 0), new Point(row, 10)),
+              },
+            })),
+          },
+        ]),
+    });
+
+    const [first, second] = await Promise.all([
+      provider.getSymbols({ editor: editorFor("first") }),
+      provider.getSymbols({ editor: editorFor("second") }),
+    ]);
+
+    expect(first.length).toBe(4096);
+    expect(second.length).toBe(4096);
+    expect(first[0].name).toBe("first0");
+    expect(first.at(-1).name).toBe("first4095");
+    expect(second[0].name).toBe("second0");
+    expect(second.at(-1).name).toBe("second4095");
+    expect(provider.pendingSymbolRequests.size).toBe(0);
+  });
+
+  it("stops a large organization after an edit at the next yield", async () => {
+    const { Range } = require("lumine");
+    let changed;
+    let signal;
+    const visited = new Set();
+    const editor = {
+      onDidChange(callback) {
+        changed = callback;
+        return { dispose() {} };
+      },
+      getGrammarQueryCaptureGroups(_queryType, options) {
+        signal = options.signal;
+        return Promise.resolve([
+          {
+            captures: Array.from({ length: 4096 }, (_, index) => ({
+              name: "name",
+              node: {
+                id: index,
+                text: `command${index}`,
+                get range() {
+                  expect(signal.aborted).toBe(false);
+                  visited.add(index);
+                  return new Range([index, 0], [index, 1]);
+                },
+              },
+            })),
+          },
+        ]);
+      },
+    };
+
+    const request = provider.getSymbols({ editor });
+    setImmediate(() => changed());
+
+    await expectAsync(request).toBeResolvedTo(null);
+    expect(visited.size).toBeGreaterThan(0);
+    expect(visited.size).toBeLessThan(4096);
+    expect(provider.pendingSymbolRequests.size).toBe(0);
   });
 
   beforeEach(async () => {
