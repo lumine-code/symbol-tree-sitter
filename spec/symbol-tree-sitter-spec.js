@@ -14,13 +14,9 @@ function getEditor() {
 
 let provider;
 
-async function getSymbols(editor, type = "file") {
+async function readDocumentSymbols(editor) {
   let controller = new AbortController();
-  let symbols = await provider.getSymbols({
-    type,
-    editor,
-    signal: controller.signal,
-  });
+  let symbols = await provider.getDocumentSymbols(editor, { signal: controller.signal });
 
   return symbols;
 }
@@ -31,6 +27,21 @@ describe("TreeSitterProvider", () => {
   afterEach(() => {
     provider?.destroy();
     provider = null;
+  });
+
+  it("publishes only the document service and replaces its destroyed generation on reactivation", async () => {
+    let pkg = await lumine.packages.activatePackage("symbol-tree-sitter");
+    const first = pkg.mainModule.provideDocumentSymbolProvider();
+    expect(pkg.mainModule.provideDocumentSymbolProvider()).toBe(first);
+    expect(typeof first.getDocumentSymbols).toBe("function");
+    expect(typeof first.onDidInvalidateDocumentSymbols).toBe("function");
+    expect(pkg.metadata.providedServices["symbol.workspace-provider"]).toBeUndefined();
+    expect(pkg.metadata.providedServices["symbol.definition-provider"]).toBeUndefined();
+    await lumine.packages.deactivatePackage("symbol-tree-sitter");
+    expect(first.destroyed).toBe(true);
+    pkg = await lumine.packages.activatePackage("symbol-tree-sitter");
+    expect(pkg.mainModule.provideDocumentSymbolProvider()).not.toBe(first);
+    expect(pkg.mainModule.provideDocumentSymbolProvider().destroyed).toBe(false);
   });
 
   it("uses only the public editor grammar-query facade", () => {
@@ -45,7 +56,7 @@ describe("TreeSitterProvider", () => {
       whenGrammarSettled() {},
     };
     const provider = new TreeSitterProvider();
-    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(0.999);
+    expect(provider.canProvideDocumentSymbols(editor)).toBe(0.999);
     provider.destroy();
   });
 
@@ -62,10 +73,10 @@ describe("TreeSitterProvider", () => {
     };
     const provider = new TreeSitterProvider();
     const events = [];
-    provider.onShouldClearCache((event) => events.push(event));
+    provider.onDidInvalidateDocumentSymbols((event) => events.push(event));
 
-    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(false);
-    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(false);
+    expect(provider.canProvideDocumentSymbols(editor)).toBe(false);
+    expect(provider.canProvideDocumentSymbols(editor)).toBe(false);
     expect(editor.whenGrammarSettled).toHaveBeenCalledTimes(1);
     hasTagsQuery = true;
     resolveSettlement(true);
@@ -73,7 +84,7 @@ describe("TreeSitterProvider", () => {
     await Promise.resolve();
 
     expect(events).toEqual([{ editor }]);
-    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(0.999);
+    expect(provider.canProvideDocumentSymbols(editor)).toBe(0.999);
     expect(events.length).toBe(1);
     provider.destroy();
   });
@@ -88,7 +99,7 @@ describe("TreeSitterProvider", () => {
     };
     const provider = new TreeSitterProvider();
 
-    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(0.999);
+    expect(provider.canProvideDocumentSymbols(editor)).toBe(0.999);
     expect(editor.whenGrammarSettled).not.toHaveBeenCalled();
     provider.destroy();
   });
@@ -112,17 +123,17 @@ describe("TreeSitterProvider", () => {
     };
     const provider = new TreeSitterProvider();
     const invalidate = jasmine.createSpy("invalidate");
-    provider.onShouldClearCache(invalidate);
+    provider.onDidInvalidateDocumentSymbols(invalidate);
 
-    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(false);
-    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(false);
+    expect(provider.canProvideDocumentSymbols(editor)).toBe(false);
+    expect(provider.canProvideDocumentSymbols(editor)).toBe(false);
     expect(whenGrammarSettled).toHaveBeenCalledTimes(1);
     waits[0].resolve(true);
     await Promise.resolve();
     await Promise.resolve();
     expect(invalidate).not.toHaveBeenCalled();
 
-    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(false);
+    expect(provider.canProvideDocumentSymbols(editor)).toBe(false);
     expect(whenGrammarSettled).toHaveBeenCalledTimes(2);
     hasTagsQuery = true;
     waits[1].resolve(true);
@@ -130,7 +141,7 @@ describe("TreeSitterProvider", () => {
     await Promise.resolve();
 
     expect(invalidate).toHaveBeenCalledOnceWith({ editor });
-    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(0.999);
+    expect(provider.canProvideDocumentSymbols(editor)).toBe(0.999);
     provider.destroy();
   });
 
@@ -144,10 +155,10 @@ describe("TreeSitterProvider", () => {
     };
     const provider = new TreeSitterProvider();
 
-    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(false);
+    expect(provider.canProvideDocumentSymbols(editor)).toBe(false);
     expect(whenGrammarSettled).not.toHaveBeenCalled();
     provider.destroy();
-    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(false);
+    expect(provider.canProvideDocumentSymbols(editor)).toBe(false);
     expect(whenGrammarSettled).not.toHaveBeenCalled();
   });
 
@@ -162,13 +173,13 @@ describe("TreeSitterProvider", () => {
     };
     const provider = new TreeSitterProvider();
 
-    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(false);
+    expect(provider.canProvideDocumentSymbols(editor)).toBe(false);
     await Promise.resolve();
     await Promise.resolve();
     expect(whenGrammarSettled).toHaveBeenCalledTimes(1);
 
     grammar = {};
-    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(false);
+    expect(provider.canProvideDocumentSymbols(editor)).toBe(false);
     await Promise.resolve();
     await Promise.resolve();
     expect(whenGrammarSettled).toHaveBeenCalledTimes(2);
@@ -195,14 +206,14 @@ describe("TreeSitterProvider", () => {
     };
     const provider = new TreeSitterProvider();
     const events = [];
-    provider.onShouldClearCache((event) => events.push(event));
+    provider.onDidInvalidateDocumentSymbols((event) => events.push(event));
 
-    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(false);
+    expect(provider.canProvideDocumentSymbols(editor)).toBe(false);
     expect(waits.length).toBe(1);
     expect(waits[0].grammar).toBe(grammarA);
 
     grammar = grammarB;
-    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(false);
+    expect(provider.canProvideDocumentSymbols(editor)).toBe(false);
     expect(waits.length).toBe(2);
     expect(waits[0].signal.aborted).toBe(true);
     expect(waits[1].grammar).toBe(grammarB);
@@ -241,14 +252,14 @@ describe("TreeSitterProvider", () => {
     };
     const provider = new TreeSitterProvider();
     const events = [];
-    provider.onShouldClearCache((event) => {
+    provider.onDidInvalidateDocumentSymbols((event) => {
       events.push(event);
-      if (event.provider === provider) {
-        provider.canProvideSymbols({ type: "file", editor });
+      if (event.editor === null) {
+        provider.canProvideDocumentSymbols(editor);
       }
     });
 
-    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(false);
+    expect(provider.canProvideDocumentSymbols(editor)).toBe(false);
     expect(waits.length).toBe(1);
 
     grammarAdded();
@@ -260,7 +271,7 @@ describe("TreeSitterProvider", () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(events).toEqual([{ provider }, { editor }]);
+    expect(events).toEqual([{ editor: null }, { editor }]);
     expect(provider.pendingGrammarSettlements.size).toBe(0);
     provider.destroy();
     expect(grammarSubscription.dispose).toHaveBeenCalledTimes(1);
@@ -291,21 +302,21 @@ describe("TreeSitterProvider", () => {
     };
     const provider = new TreeSitterProvider();
     const events = [];
-    provider.onShouldClearCache((event) => events.push(event));
+    provider.onDidInvalidateDocumentSymbols((event) => events.push(event));
 
-    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(false);
+    expect(provider.canProvideDocumentSymbols(editor)).toBe(false);
     await Promise.resolve();
     await Promise.resolve();
     expect(provider.pendingGrammarSettlements.size).toBe(0);
 
     hasTagsQuery = true;
     callbacks.add();
-    expect(events).toEqual([{ provider }]);
-    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(0.999);
+    expect(events).toEqual([{ editor: null }]);
+    expect(provider.canProvideDocumentSymbols(editor)).toBe(0.999);
 
     callbacks.update();
     callbacks.remove();
-    expect(events).toEqual([{ provider }, { provider }, { provider }]);
+    expect(events).toEqual([{ editor: null }, { editor: null }, { editor: null }]);
 
     provider.destroy();
     for (const disposable of Object.values(listenerDisposables)) {
@@ -331,9 +342,9 @@ describe("TreeSitterProvider", () => {
     };
     const provider = new TreeSitterProvider();
     const invalidate = jasmine.createSpy("invalidate");
-    provider.onShouldClearCache(invalidate);
+    provider.onDidInvalidateDocumentSymbols(invalidate);
 
-    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(false);
+    expect(provider.canProvideDocumentSymbols(editor)).toBe(false);
     provider.destroy();
     await settlementPromise;
     await Promise.resolve();
@@ -358,9 +369,9 @@ describe("TreeSitterProvider", () => {
     };
     const provider = new TreeSitterProvider();
     const invalidate = jasmine.createSpy("invalidate");
-    provider.onShouldClearCache(invalidate);
+    provider.onDidInvalidateDocumentSymbols(invalidate);
 
-    expect(provider.canProvideSymbols({ type: "file", editor })).toBe(false);
+    expect(provider.canProvideDocumentSymbols(editor)).toBe(false);
     hasTagsQuery = true;
     grammar = {};
     resolveSettlement(false);
@@ -392,11 +403,7 @@ describe("TreeSitterProvider", () => {
     };
     const provider = new TreeSitterProvider();
 
-    const symbolsPromise = provider.getSymbols({
-      type: "file",
-      editor,
-      signal: controller.signal,
-    });
+    const symbolsPromise = provider.getDocumentSymbols(editor, { signal: controller.signal });
     expect(finishCaptures).toBeDefined();
     controller.abort();
 
@@ -429,11 +436,7 @@ describe("TreeSitterProvider", () => {
     ]);
     const controller = new AbortController();
 
-    const symbolsPromise = provider.getSymbols({
-      type: "file",
-      editor,
-      signal: controller.signal,
-    });
+    const symbolsPromise = provider.getDocumentSymbols(editor, { signal: controller.signal });
     await Promise.resolve();
     await Promise.resolve();
     grammarGeneration++;
@@ -458,9 +461,7 @@ describe("TreeSitterProvider", () => {
       captures.map(({ symbol }) => symbol),
     );
 
-    const symbols = await provider.getSymbols({
-      type: "file",
-      editor,
+    const symbols = await provider.getDocumentSymbols(editor, {
       signal: new AbortController().signal,
     });
 
@@ -484,7 +485,7 @@ describe("TreeSitterProvider", () => {
     const provider = new TreeSitterProvider();
     spyOn(provider.captureOrganizer, "process").and.returnValue(expected);
 
-    const symbols = await provider.getSymbols({ editor });
+    const symbols = await provider.getDocumentSymbols(editor, {});
 
     expect(symbols.length).toBe(expected.length);
     expect(symbols[0]).toBe(expected[0]);
@@ -508,7 +509,7 @@ describe("TreeSitterProvider", () => {
           return new Promise((resolve) => (finishCaptures = resolve));
         },
       };
-      const request = provider.getSymbols({ editor });
+      const request = provider.getDocumentSymbols(editor, {});
       cancel();
       finishCaptures([
         {
@@ -547,8 +548,8 @@ describe("TreeSitterProvider", () => {
     });
 
     const [first, second] = await Promise.all([
-      provider.getSymbols({ editor: editorFor("first") }),
-      provider.getSymbols({ editor: editorFor("second") }),
+      provider.getDocumentSymbols(editorFor("first"), {}),
+      provider.getDocumentSymbols(editorFor("second"), {}),
     ]);
 
     expect(first.length).toBe(4096);
@@ -567,7 +568,7 @@ describe("TreeSitterProvider", () => {
     const visited = new Set();
     const outerController = new AbortController();
     const invalidations = [];
-    provider.onShouldClearCache((event) => {
+    provider.onDidInvalidateDocumentSymbols((event) => {
       invalidations.push(event);
       // The symbol hub withdraws the outer request before accepting a result
       // from the stale generation. A null answer is valid only after that.
@@ -599,7 +600,7 @@ describe("TreeSitterProvider", () => {
       },
     };
 
-    const request = provider.getSymbols({ editor, signal: outerController.signal });
+    const request = provider.getDocumentSymbols(editor, { signal: outerController.signal });
     setImmediate(() => changed());
 
     await expectAsync(request).toBeResolvedTo(null);
@@ -638,17 +639,16 @@ describe("TreeSitterProvider", () => {
     });
 
     it("is willing to provide symbols for the current file", () => {
-      let meta = { type: "file", editor };
-      expect(provider.canProvideSymbols(meta)).toBe(0.999);
+      expect(provider.canProvideDocumentSymbols(editor)).toBe(0.999);
     });
 
-    it("is not willing to provide symbols for an entire project", () => {
-      let meta = { type: "project", editor };
-      expect(provider.canProvideSymbols(meta)).toBe(false);
+    it("exposes only document symbol operations", () => {
+      expect(provider.searchWorkspaceSymbols).toBeUndefined();
+      expect(provider.getDefinitions).toBeUndefined();
     });
 
     it("provides all JavaScript functions", async () => {
-      let symbols = await getSymbols(editor, "file");
+      let symbols = await readDocumentSymbols(editor);
 
       expect(symbols[0].name).toBe("quicksort");
       expect(symbols[0].position.row).toEqual(0);
@@ -667,8 +667,8 @@ describe("TreeSitterProvider", () => {
 
     it("is not willing to provide symbols for the current file", () => {
       expect(editor.getGrammar()).toBe(lumine.grammars.nullGrammar);
-      let meta = { type: "file", editor };
-      expect(provider.canProvideSymbols(meta)).toBe(false);
+
+      expect(provider.canProvideDocumentSymbols(editor)).toBe(false);
     });
   });
 
@@ -683,8 +683,7 @@ describe("TreeSitterProvider", () => {
     });
 
     it("is willing to provide symbols", () => {
-      let meta = { type: "file", editor };
-      expect(provider.canProvideSymbols(meta)).toBe(0.999);
+      expect(provider.canProvideDocumentSymbols(editor)).toBe(0.999);
     });
 
     describe("and has content", () => {
@@ -695,7 +694,7 @@ describe("TreeSitterProvider", () => {
       });
 
       it("provides symbols just as if the file were saved on disk", async () => {
-        let symbols = await getSymbols(editor, "file");
+        let symbols = await readDocumentSymbols(editor);
 
         expect(symbols[0].name).toBe("quicksort");
         expect(symbols[0].position.row).toEqual(0);
@@ -708,7 +707,7 @@ describe("TreeSitterProvider", () => {
 
   describe("when the file has multiple language layers", () => {
     beforeEach(async () => {
-      await lumine.packages.activatePackage("language-ruby");
+      await lumine.packages.activatePackage(path.resolve(__dirname, "..", "..", "language-ruby"));
       await lumine.workspace.open(directory.resolve("embed.rb"));
       editor = getEditor();
       await editor.whenGrammarSettled();
@@ -721,7 +720,7 @@ describe("TreeSitterProvider", () => {
         jasmine.arrayWithExactContents(["source.ruby", "source.js"]),
       );
 
-      let symbols = await getSymbols(editor, "file");
+      let symbols = await readDocumentSymbols(editor);
 
       expect(symbols[0].name).toBe("foo");
       expect(symbols[0].position.row).toEqual(1);
@@ -752,7 +751,7 @@ describe("TreeSitterProvider", () => {
     });
 
     it("can infer tag names from those captures", async () => {
-      let symbols = await getSymbols(editor, "file");
+      let symbols = await readDocumentSymbols(editor);
 
       expect(symbols[0].name).toBe("quicksort");
       expect(symbols[0].tag).toBe("function");
@@ -788,13 +787,13 @@ describe("TreeSitterProvider", () => {
     });
 
     it("skips references when they are disabled in settings", async () => {
-      let symbols = await getSymbols(editor, "file");
+      let symbols = await readDocumentSymbols(editor);
       expect(symbols.length).toBe(2);
     });
 
     it("includes references when they are enabled in settings", async () => {
       lumine.config.set("symbol-tree-sitter.includeReferences", true);
-      let symbols = await getSymbols(editor, "file");
+      let symbols = await readDocumentSymbols(editor);
       expect(symbols.length).toBe(5);
       expect(symbols.map((s) => s.tag)).toEqual(["function", "function", "call", "call", "call"]);
     });
@@ -826,7 +825,7 @@ describe("TreeSitterProvider", () => {
       });
 
       it("assigns a `context` property on each symbol", async () => {
-        let symbols = await getSymbols(editor, "file");
+        let symbols = await readDocumentSymbols(editor);
 
         expect(symbols[0].context).toBe("something");
         expect(symbols[0].position.row).toEqual(0);
@@ -851,7 +850,7 @@ describe("TreeSitterProvider", () => {
       });
 
       it("assigns a `context` property on each symbol containing the text of the referenced node", async () => {
-        let symbols = await getSymbols(editor, "file");
+        let symbols = await readDocumentSymbols(editor);
 
         expect(symbols[0].name).toBe("push");
         expect(symbols[0].context).toBe("left");
@@ -879,7 +878,7 @@ describe("TreeSitterProvider", () => {
         `,
         );
 
-        let symbols = await getSymbols(editor, "file");
+        let symbols = await readDocumentSymbols(editor);
         console.log("symbols:", symbols);
 
         expect(symbols[0].icon).toBe("book");
@@ -904,7 +903,7 @@ describe("TreeSitterProvider", () => {
         `,
         );
 
-        let symbols = await getSymbols(editor, "file");
+        let symbols = await readDocumentSymbols(editor);
 
         expect(symbols[0].icon).toBe("book");
         expect(symbols[0].position.row).toEqual(0);
@@ -928,7 +927,7 @@ describe("TreeSitterProvider", () => {
         `,
         );
 
-        let symbols = await getSymbols(editor, "file");
+        let symbols = await readDocumentSymbols(editor);
 
         expect(symbols[0].icon).toBe("book");
         expect(symbols[0].position.row).toEqual(0);
@@ -953,7 +952,7 @@ describe("TreeSitterProvider", () => {
         `,
         );
 
-        let symbols = await getSymbols(editor, "file");
+        let symbols = await readDocumentSymbols(editor);
 
         expect(symbols[0].tag).toBe("class");
         expect(symbols[0].icon).toBeNull();
@@ -978,7 +977,7 @@ describe("TreeSitterProvider", () => {
         `,
         );
 
-        let symbols = await getSymbols(editor, "file");
+        let symbols = await readDocumentSymbols(editor);
 
         expect(symbols[0].tag).toBe("class");
         expect(symbols[0].icon).toBeNull();
@@ -1006,7 +1005,7 @@ describe("TreeSitterProvider", () => {
         );
       });
       it("strips the given text from each symbol", async () => {
-        let symbols = await getSymbols(editor, "file");
+        let symbols = await readDocumentSymbols(editor);
 
         expect(symbols[0].name).toBe("quicks");
         expect(symbols[0].position.row).toEqual(0);
@@ -1032,7 +1031,7 @@ describe("TreeSitterProvider", () => {
         );
       });
       it("prepends the given text to each symbol", async () => {
-        let symbols = await getSymbols(editor, "file");
+        let symbols = await readDocumentSymbols(editor);
 
         expect(symbols[0].name).toBe("Foo: quicksort");
         expect(symbols[0].position.row).toEqual(0);
@@ -1059,7 +1058,7 @@ describe("TreeSitterProvider", () => {
         );
       });
       it("appends the given text to each symbol", async () => {
-        let symbols = await getSymbols(editor, "file");
+        let symbols = await readDocumentSymbols(editor);
 
         expect(symbols[0].name).toBe("quicksort (foo)");
         expect(symbols[0].position.row).toEqual(0);
@@ -1094,7 +1093,7 @@ describe("TreeSitterProvider", () => {
         );
       });
       it(`prepends the associated node's text to each symbol`, async () => {
-        let symbols = await getSymbols(editor, "file");
+        let symbols = await readDocumentSymbols(editor);
 
         expect(symbols[0].name).toBe("quicksort");
         expect(symbols[0].position.row).toEqual(0);
@@ -1134,7 +1133,7 @@ describe("TreeSitterProvider", () => {
         );
       });
       it(`prepends the associated node's symbol name to each symbol`, async () => {
-        let symbols = await getSymbols(editor, "file");
+        let symbols = await readDocumentSymbols(editor);
 
         expect(symbols[0].name).toBe("ROOT: quicksort");
         expect(symbols[0].position.row).toEqual(0);

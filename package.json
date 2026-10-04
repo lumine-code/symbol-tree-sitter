@@ -17,6 +17,7 @@
   },
   "license": "MIT",
   "main": "./lib/main",
+  "types": "./lib/main.d.ts",
   "files": [
     "lib",
     "spec"
@@ -44,10 +45,10 @@
     }
   },
   "providedServices": {
-    "symbol.provider": {
-      "description": "Allows external sources to suggest symbols for a given file or project.",
+    "symbol.document-provider": {
+      "description": "Supplies symbols from the current document's Tree-sitter queries.",
       "versions": {
-        "1.0.0": "provideSymbol"
+        "1.0.0": "provideDocumentSymbolProvider"
       }
     }
   },
