@@ -12,11 +12,27 @@ function getEditor() {
   return lumine.workspace.getActiveTextEditor();
 }
 
+const queryEditor = (overrides = {}) => ({
+  hasGrammarQuery: () => true,
+  getGrammar: () => ({}),
+  whenGrammarSettled: () => Promise.resolve(true),
+  getGrammarQueryCaptureGroups: () => Promise.resolve([]),
+  ...overrides,
+});
+
+const sourceScore = (provider, editor) => {
+  const source = provider.getDocumentSymbolSources(editor)[0];
+  return source?.state === "ready" ? source.score : false;
+};
+
 let provider;
 
 async function readDocumentSymbols(editor) {
   let controller = new AbortController();
-  let symbols = await provider.getDocumentSymbols(editor, { signal: controller.signal });
+  let symbols = await provider.getDocumentSymbols(editor, {
+    sourceId: "symbol-tree-sitter",
+    signal: controller.signal,
+  });
 
   return symbols;
 }
@@ -46,7 +62,7 @@ describe("TreeSitterProvider", () => {
 
   it("uses only the public editor grammar-query facade", () => {
     const grammar = {};
-    const editor = {
+    const editor = queryEditor({
       getBuffer() {
         throw new Error("must not inspect the language mode");
       },
@@ -54,9 +70,47 @@ describe("TreeSitterProvider", () => {
       getGrammar: () => grammar,
       getGrammarQueryCaptureGroups() {},
       whenGrammarSettled() {},
-    };
+    });
     const provider = new TreeSitterProvider();
-    expect(provider.canProvideDocumentSymbols(editor)).toBe(0.999);
+    expect(sourceScore(provider, editor)).toBe(0.999);
+    provider.destroy();
+  });
+
+  it("describes its stable source and declines another source ID", async () => {
+    const editor = queryEditor({
+      hasGrammarQuery: () => true,
+      getGrammar: () => ({}),
+      whenGrammarSettled() {},
+      getGrammarQueryCaptureGroups: jasmine.createSpy("captures").and.resolveTo([{ captures: [] }]),
+    });
+    const provider = new TreeSitterProvider();
+    expect(provider.getDocumentSymbolSources(editor)).toEqual([
+      {
+        id: "symbol-tree-sitter",
+        name: "Tree-sitter",
+        shortLabel: "TS",
+        score: 0.999,
+        state: "ready",
+      },
+    ]);
+    expect(await provider.getDocumentSymbols(editor, { sourceId: "ide-client:any" })).toBeNull();
+    expect(await provider.getDocumentSymbols(editor)).toBeNull();
+    expect(editor.getGrammarQueryCaptureGroups).not.toHaveBeenCalled();
+    provider.destroy();
+  });
+
+  it("keeps Tree-sitter ready when this grammar has no tags query", () => {
+    const editor = queryEditor({
+      hasGrammarQuery: () => false,
+      getGrammar: () => lumine.grammars.nullGrammar,
+      whenGrammarSettled() {},
+      getGrammarQueryCaptureGroups() {},
+    });
+    const provider = new TreeSitterProvider();
+    const source = provider.getDocumentSymbolSources(editor)[0];
+    expect(source.id).toBe("symbol-tree-sitter");
+    expect(source.state).toBe("ready");
+    expect(source.message).toBeUndefined();
     provider.destroy();
   });
 
@@ -65,18 +119,18 @@ describe("TreeSitterProvider", () => {
     const settlement = new Promise((resolve) => (resolveSettlement = resolve));
     let hasTagsQuery = false;
     const grammar = {};
-    const editor = {
+    const editor = queryEditor({
       hasGrammarQuery: () => hasTagsQuery,
       getGrammar: () => grammar,
       getGrammarQueryCaptureGroups() {},
       whenGrammarSettled: jasmine.createSpy("whenGrammarSettled").and.returnValue(settlement),
-    };
+    });
     const provider = new TreeSitterProvider();
     const events = [];
     provider.onDidInvalidateDocumentSymbols((event) => events.push(event));
 
-    expect(provider.canProvideDocumentSymbols(editor)).toBe(false);
-    expect(provider.canProvideDocumentSymbols(editor)).toBe(false);
+    expect(sourceScore(provider, editor)).toBe(0.999);
+    expect(sourceScore(provider, editor)).toBe(0.999);
     expect(editor.whenGrammarSettled).toHaveBeenCalledTimes(1);
     hasTagsQuery = true;
     resolveSettlement(true);
@@ -84,22 +138,22 @@ describe("TreeSitterProvider", () => {
     await Promise.resolve();
 
     expect(events).toEqual([{ editor }]);
-    expect(provider.canProvideDocumentSymbols(editor)).toBe(0.999);
+    expect(sourceScore(provider, editor)).toBe(0.999);
     expect(events.length).toBe(1);
     provider.destroy();
   });
 
   it("claims a root tags-query declaration before its grammar settles", () => {
     const grammar = {};
-    const editor = {
+    const editor = queryEditor({
       hasGrammarQuery: () => true,
       getGrammar: () => grammar,
       getGrammarQueryCaptureGroups() {},
       whenGrammarSettled: jasmine.createSpy("whenGrammarSettled"),
-    };
+    });
     const provider = new TreeSitterProvider();
 
-    expect(provider.canProvideDocumentSymbols(editor)).toBe(0.999);
+    expect(sourceScore(provider, editor)).toBe(0.999);
     expect(editor.whenGrammarSettled).not.toHaveBeenCalled();
     provider.destroy();
   });
@@ -115,25 +169,25 @@ describe("TreeSitterProvider", () => {
           signal.addEventListener("abort", () => resolve(false), { once: true });
         }),
     );
-    const editor = {
+    const editor = queryEditor({
       hasGrammarQuery: () => hasTagsQuery,
       getGrammar: () => grammar,
       getGrammarQueryCaptureGroups() {},
       whenGrammarSettled,
-    };
+    });
     const provider = new TreeSitterProvider();
     const invalidate = jasmine.createSpy("invalidate");
     provider.onDidInvalidateDocumentSymbols(invalidate);
 
-    expect(provider.canProvideDocumentSymbols(editor)).toBe(false);
-    expect(provider.canProvideDocumentSymbols(editor)).toBe(false);
+    expect(sourceScore(provider, editor)).toBe(0.999);
+    expect(sourceScore(provider, editor)).toBe(0.999);
     expect(whenGrammarSettled).toHaveBeenCalledTimes(1);
     waits[0].resolve(true);
     await Promise.resolve();
     await Promise.resolve();
     expect(invalidate).not.toHaveBeenCalled();
 
-    expect(provider.canProvideDocumentSymbols(editor)).toBe(false);
+    expect(sourceScore(provider, editor)).toBe(0.999);
     expect(whenGrammarSettled).toHaveBeenCalledTimes(2);
     hasTagsQuery = true;
     waits[1].resolve(true);
@@ -141,45 +195,45 @@ describe("TreeSitterProvider", () => {
     await Promise.resolve();
 
     expect(invalidate).toHaveBeenCalledOnceWith({ editor });
-    expect(provider.canProvideDocumentSymbols(editor)).toBe(0.999);
+    expect(sourceScore(provider, editor)).toBe(0.999);
     provider.destroy();
   });
 
   it("does not watch a null grammar or restart after provider destruction", () => {
     const whenGrammarSettled = jasmine.createSpy("whenGrammarSettled");
-    const editor = {
+    const editor = queryEditor({
       hasGrammarQuery: () => false,
       getGrammar: () => lumine.grammars.nullGrammar,
       getGrammarQueryCaptureGroups() {},
       whenGrammarSettled,
-    };
+    });
     const provider = new TreeSitterProvider();
 
-    expect(provider.canProvideDocumentSymbols(editor)).toBe(false);
+    expect(sourceScore(provider, editor)).toBe(0.999);
     expect(whenGrammarSettled).not.toHaveBeenCalled();
     provider.destroy();
-    expect(provider.canProvideDocumentSymbols(editor)).toBe(false);
+    expect(sourceScore(provider, editor)).toBe(false);
     expect(whenGrammarSettled).not.toHaveBeenCalled();
   });
 
   it("watches again when the root grammar identity changes", async () => {
     let grammar = {};
     const whenGrammarSettled = jasmine.createSpy("whenGrammarSettled").and.resolveTo(true);
-    const editor = {
+    const editor = queryEditor({
       hasGrammarQuery: () => false,
       getGrammar: () => grammar,
       getGrammarQueryCaptureGroups() {},
       whenGrammarSettled,
-    };
+    });
     const provider = new TreeSitterProvider();
 
-    expect(provider.canProvideDocumentSymbols(editor)).toBe(false);
+    expect(sourceScore(provider, editor)).toBe(0.999);
     await Promise.resolve();
     await Promise.resolve();
     expect(whenGrammarSettled).toHaveBeenCalledTimes(1);
 
     grammar = {};
-    expect(provider.canProvideDocumentSymbols(editor)).toBe(false);
+    expect(sourceScore(provider, editor)).toBe(0.999);
     await Promise.resolve();
     await Promise.resolve();
     expect(whenGrammarSettled).toHaveBeenCalledTimes(2);
@@ -192,7 +246,7 @@ describe("TreeSitterProvider", () => {
     let grammar = grammarA;
     let hasTagsQuery = false;
     const waits = [];
-    const editor = {
+    const editor = queryEditor({
       hasGrammarQuery: () => hasTagsQuery,
       getGrammar: () => grammar,
       getGrammarQueryCaptureGroups() {},
@@ -203,17 +257,17 @@ describe("TreeSitterProvider", () => {
           signal.addEventListener("abort", () => resolve(false), { once: true });
         });
       },
-    };
+    });
     const provider = new TreeSitterProvider();
     const events = [];
     provider.onDidInvalidateDocumentSymbols((event) => events.push(event));
 
-    expect(provider.canProvideDocumentSymbols(editor)).toBe(false);
+    expect(sourceScore(provider, editor)).toBe(0.999);
     expect(waits.length).toBe(1);
     expect(waits[0].grammar).toBe(grammarA);
 
     grammar = grammarB;
-    expect(provider.canProvideDocumentSymbols(editor)).toBe(false);
+    expect(sourceScore(provider, editor)).toBe(0.999);
     expect(waits.length).toBe(2);
     expect(waits[0].signal.aborted).toBe(true);
     expect(waits[1].grammar).toBe(grammarB);
@@ -239,7 +293,7 @@ describe("TreeSitterProvider", () => {
     const grammar = {};
     let hasTagsQuery = false;
     const waits = [];
-    const editor = {
+    const editor = queryEditor({
       hasGrammarQuery: () => hasTagsQuery,
       getGrammar: () => grammar,
       getGrammarQueryCaptureGroups() {},
@@ -249,17 +303,17 @@ describe("TreeSitterProvider", () => {
           signal.addEventListener("abort", () => resolve(false), { once: true });
         });
       },
-    };
+    });
     const provider = new TreeSitterProvider();
     const events = [];
     provider.onDidInvalidateDocumentSymbols((event) => {
       events.push(event);
       if (event.editor === null) {
-        provider.canProvideDocumentSymbols(editor);
+        sourceScore(provider, editor);
       }
     });
 
-    expect(provider.canProvideDocumentSymbols(editor)).toBe(false);
+    expect(sourceScore(provider, editor)).toBe(0.999);
     expect(waits.length).toBe(1);
 
     grammarAdded();
@@ -294,17 +348,17 @@ describe("TreeSitterProvider", () => {
 
     const grammar = {};
     let hasTagsQuery = false;
-    const editor = {
+    const editor = queryEditor({
       hasGrammarQuery: () => hasTagsQuery,
       getGrammar: () => grammar,
       getGrammarQueryCaptureGroups() {},
       whenGrammarSettled: () => Promise.resolve(true),
-    };
+    });
     const provider = new TreeSitterProvider();
     const events = [];
     provider.onDidInvalidateDocumentSymbols((event) => events.push(event));
 
-    expect(provider.canProvideDocumentSymbols(editor)).toBe(false);
+    expect(sourceScore(provider, editor)).toBe(0.999);
     await Promise.resolve();
     await Promise.resolve();
     expect(provider.pendingGrammarSettlements.size).toBe(0);
@@ -312,7 +366,7 @@ describe("TreeSitterProvider", () => {
     hasTagsQuery = true;
     callbacks.add();
     expect(events).toEqual([{ editor: null }]);
-    expect(provider.canProvideDocumentSymbols(editor)).toBe(0.999);
+    expect(sourceScore(provider, editor)).toBe(0.999);
 
     callbacks.update();
     callbacks.remove();
@@ -328,7 +382,7 @@ describe("TreeSitterProvider", () => {
     let watchedSignal;
     let settlementPromise;
     const grammar = {};
-    const editor = {
+    const editor = queryEditor({
       hasGrammarQuery: () => false,
       getGrammar: () => grammar,
       getGrammarQueryCaptureGroups() {},
@@ -339,12 +393,12 @@ describe("TreeSitterProvider", () => {
         });
         return settlementPromise;
       },
-    };
+    });
     const provider = new TreeSitterProvider();
     const invalidate = jasmine.createSpy("invalidate");
     provider.onDidInvalidateDocumentSymbols(invalidate);
 
-    expect(provider.canProvideDocumentSymbols(editor)).toBe(false);
+    expect(sourceScore(provider, editor)).toBe(0.999);
     provider.destroy();
     await settlementPromise;
     await Promise.resolve();
@@ -358,7 +412,7 @@ describe("TreeSitterProvider", () => {
     let resolveSettlement;
     let hasTagsQuery = false;
     let grammar = {};
-    const editor = {
+    const editor = queryEditor({
       hasGrammarQuery: () => hasTagsQuery,
       getGrammar: () => grammar,
       getGrammarQueryCaptureGroups() {},
@@ -366,12 +420,12 @@ describe("TreeSitterProvider", () => {
         new Promise((resolve) => {
           resolveSettlement = resolve;
         }),
-    };
+    });
     const provider = new TreeSitterProvider();
     const invalidate = jasmine.createSpy("invalidate");
     provider.onDidInvalidateDocumentSymbols(invalidate);
 
-    expect(provider.canProvideDocumentSymbols(editor)).toBe(false);
+    expect(sourceScore(provider, editor)).toBe(0.999);
     hasTagsQuery = true;
     grammar = {};
     resolveSettlement(false);
@@ -396,14 +450,17 @@ describe("TreeSitterProvider", () => {
             finishCaptures = resolve;
           }),
       );
-    const editor = {
+    const editor = queryEditor({
       hasGrammarQuery: () => true,
       getGrammarQueryCaptureGroups,
       whenGrammarSettled,
-    };
+    });
     const provider = new TreeSitterProvider();
 
-    const symbolsPromise = provider.getDocumentSymbols(editor, { signal: controller.signal });
+    const symbolsPromise = provider.getDocumentSymbols(editor, {
+      sourceId: "symbol-tree-sitter",
+      signal: controller.signal,
+    });
     expect(finishCaptures).toBeDefined();
     controller.abort();
 
@@ -418,7 +475,12 @@ describe("TreeSitterProvider", () => {
   it("does not publish capture groups invalidated by a grammar change", async () => {
     let grammarGeneration = 0;
     let finishCaptureRequest;
-    const editor = {
+    let grammarChanged;
+    const editor = queryEditor({
+      onDidChangeGrammar(callback) {
+        grammarChanged = callback;
+        return { dispose() {} };
+      },
       hasGrammarQuery: () => true,
       whenGrammarSettled: () => Promise.resolve(true),
       getGrammarQueryCaptureGroups() {
@@ -429,17 +491,21 @@ describe("TreeSitterProvider", () => {
           };
         });
       },
-    };
+    });
     const provider = new TreeSitterProvider();
     spyOn(provider.captureOrganizer, "process").and.returnValue([
       { name: "stale", position: { compare: () => 0 } },
     ]);
     const controller = new AbortController();
 
-    const symbolsPromise = provider.getDocumentSymbols(editor, { signal: controller.signal });
+    const symbolsPromise = provider.getDocumentSymbols(editor, {
+      sourceId: "symbol-tree-sitter",
+      signal: controller.signal,
+    });
     await Promise.resolve();
     await Promise.resolve();
     grammarGeneration++;
+    grammarChanged();
     finishCaptureRequest();
 
     await expectAsync(symbolsPromise).toBeResolvedTo(null);
@@ -452,16 +518,17 @@ describe("TreeSitterProvider", () => {
     const injectedSymbol = { name: "injected", position: { compare: () => 1 } };
     const rootCaptures = [{ symbol: rootSymbol }];
     const injectedCaptures = [{ symbol: injectedSymbol }];
-    const editor = {
+    const editor = queryEditor({
       getGrammarQueryCaptureGroups: () =>
         Promise.resolve([{ captures: injectedCaptures }, { captures: rootCaptures }]),
-    };
+    });
     const provider = new TreeSitterProvider();
     spyOn(provider.captureOrganizer, "process").and.callFake((captures) =>
       captures.map(({ symbol }) => symbol),
     );
 
     const symbols = await provider.getDocumentSymbols(editor, {
+      sourceId: "symbol-tree-sitter",
       signal: new AbortController().signal,
     });
 
@@ -479,13 +546,13 @@ describe("TreeSitterProvider", () => {
       name: `command-${row}`,
       position: new Point(row, 0),
     }));
-    const editor = {
+    const editor = queryEditor({
       getGrammarQueryCaptureGroups: () => Promise.resolve([{ captures: [] }]),
-    };
+    });
     const provider = new TreeSitterProvider();
     spyOn(provider.captureOrganizer, "process").and.returnValue(expected);
 
-    const symbols = await provider.getDocumentSymbols(editor, {});
+    const symbols = await provider.getDocumentSymbols(editor, { sourceId: "symbol-tree-sitter" });
 
     expect(symbols.length).toBe(expected.length);
     expect(symbols[0]).toBe(expected[0]);
@@ -499,7 +566,7 @@ describe("TreeSitterProvider", () => {
       let finishCaptures;
       let requestedSignal;
       const disposed = jasmine.createSpy("dispose");
-      const editor = {
+      const editor = queryEditor({
         [event](callback) {
           cancel = callback;
           return { dispose: disposed };
@@ -508,8 +575,8 @@ describe("TreeSitterProvider", () => {
           requestedSignal = signal;
           return new Promise((resolve) => (finishCaptures = resolve));
         },
-      };
-      const request = provider.getDocumentSymbols(editor, {});
+      });
+      const request = provider.getDocumentSymbols(editor, { sourceId: "symbol-tree-sitter" });
       cancel();
       finishCaptures([
         {
@@ -531,25 +598,26 @@ describe("TreeSitterProvider", () => {
 
   it("keeps overlapping large editor requests in separate organizers", async () => {
     const { Point, Range } = require("lumine");
-    const editorFor = (prefix) => ({
-      getGrammarQueryCaptureGroups: () =>
-        Promise.resolve([
-          {
-            captures: Array.from({ length: 4096 }, (_, row) => ({
-              name: "name",
-              node: {
-                id: row,
-                text: `${prefix}${row}`,
-                range: new Range(new Point(row, 0), new Point(row, 10)),
-              },
-            })),
-          },
-        ]),
-    });
+    const editorFor = (prefix) =>
+      queryEditor({
+        getGrammarQueryCaptureGroups: () =>
+          Promise.resolve([
+            {
+              captures: Array.from({ length: 4096 }, (_, row) => ({
+                name: "name",
+                node: {
+                  id: row,
+                  text: `${prefix}${row}`,
+                  range: new Range(new Point(row, 0), new Point(row, 10)),
+                },
+              })),
+            },
+          ]),
+      });
 
     const [first, second] = await Promise.all([
-      provider.getDocumentSymbols(editorFor("first"), {}),
-      provider.getDocumentSymbols(editorFor("second"), {}),
+      provider.getDocumentSymbols(editorFor("first"), { sourceId: "symbol-tree-sitter" }),
+      provider.getDocumentSymbols(editorFor("second"), { sourceId: "symbol-tree-sitter" }),
     ]);
 
     expect(first.length).toBe(4096);
@@ -574,7 +642,7 @@ describe("TreeSitterProvider", () => {
       // from the stale generation. A null answer is valid only after that.
       outerController.abort();
     });
-    const editor = {
+    const editor = queryEditor({
       onDidChange(callback) {
         changed = callback;
         return { dispose() {} };
@@ -598,9 +666,12 @@ describe("TreeSitterProvider", () => {
           },
         ]);
       },
-    };
+    });
 
-    const request = provider.getDocumentSymbols(editor, { signal: outerController.signal });
+    const request = provider.getDocumentSymbols(editor, {
+      sourceId: "symbol-tree-sitter",
+      signal: outerController.signal,
+    });
     setImmediate(() => changed());
 
     await expectAsync(request).toBeResolvedTo(null);
@@ -639,7 +710,7 @@ describe("TreeSitterProvider", () => {
     });
 
     it("is willing to provide symbols for the current file", () => {
-      expect(provider.canProvideDocumentSymbols(editor)).toBe(0.999);
+      expect(sourceScore(provider, editor)).toBe(0.999);
     });
 
     it("exposes only document symbol operations", () => {
@@ -665,11 +736,37 @@ describe("TreeSitterProvider", () => {
       editor.setGrammar(lumine.grammars.nullGrammar);
     });
 
-    it("is not willing to provide symbols for the current file", () => {
+    it("keeps the source ready and returns an empty list for the current file", async () => {
       expect(editor.getGrammar()).toBe(lumine.grammars.nullGrammar);
 
-      expect(provider.canProvideDocumentSymbols(editor)).toBe(false);
+      expect(sourceScore(provider, editor)).toBe(0.999);
+      expect(await readDocumentSymbols(editor)).toEqual([]);
     });
+  });
+
+  it("keeps a real plain-text buffer selectable and treats no queries as a valid empty answer", async () => {
+    const editor = await lumine.workspace.open();
+    editor.setGrammar(lumine.grammars.nullGrammar);
+    editor.setText("There are no declarations or parser queries here.");
+    expect(editor.hasGrammarQuery("tagsQuery")).toBe(false);
+    const source = provider.getDocumentSymbolSources(editor)[0];
+    expect(source).toEqual({
+      id: "symbol-tree-sitter",
+      name: "Tree-sitter",
+      shortLabel: "TS",
+      score: 0.999,
+      state: "ready",
+    });
+    expect(await readDocumentSymbols(editor)).toEqual([]);
+  });
+
+  it("declines surfaces that do not implement the complete editor query facade", async () => {
+    const incomplete = { getGrammarQueryCaptureGroups: jasmine.createSpy("captures") };
+    expect(provider.getDocumentSymbolSources(incomplete)).toEqual([]);
+    expect(
+      await provider.getDocumentSymbols(incomplete, { sourceId: "symbol-tree-sitter" }),
+    ).toBeNull();
+    expect(incomplete.getGrammarQueryCaptureGroups).not.toHaveBeenCalled();
   });
 
   describe("when the buffer is new and unsaved", () => {
@@ -683,7 +780,7 @@ describe("TreeSitterProvider", () => {
     });
 
     it("is willing to provide symbols", () => {
-      expect(provider.canProvideDocumentSymbols(editor)).toBe(0.999);
+      expect(sourceScore(provider, editor)).toBe(0.999);
     });
 
     describe("and has content", () => {

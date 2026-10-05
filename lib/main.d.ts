@@ -13,10 +13,20 @@ export interface DocumentSymbol {
 export interface DocumentSymbolProvider {
   name: "Tree-sitter";
   packageName: "symbol-tree-sitter";
-  canProvideDocumentSymbols(editor: TextEditor): 0.999 | false;
+  getDocumentSymbolSources(
+    editor: TextEditor,
+    options?: { signal?: AbortSignal },
+  ): Array<{
+    id: "symbol-tree-sitter";
+    name: "Tree-sitter";
+    shortLabel: "TS";
+    score: 0.999;
+    state: "ready";
+  }>;
   getDocumentSymbols(
     editor: TextEditor,
-    options?: {
+    options: {
+      sourceId: "symbol-tree-sitter";
       signal?: AbortSignal;
       timeoutMs?: number;
     },
