@@ -91,6 +91,7 @@ describe("TreeSitterProvider", () => {
         shortLabel: "TS",
         score: 0.999,
         state: "ready",
+        execution: "local",
       },
     ]);
     expect(await provider.getDocumentSymbols(editor, { sourceId: "ide-client:any" })).toBeNull();
@@ -472,6 +473,81 @@ describe("TreeSitterProvider", () => {
     provider.destroy();
   });
 
+  it("lets a local capture request finish beyond a remote deadline when timeoutMs is zero", async () => {
+    const { Range } = require("lumine");
+    const requests = [];
+    const editor = queryEditor({
+      getGrammarQueryCaptureGroups(_queryType, { signal }) {
+        return new Promise((resolve) => requests.push({ signal, resolve }));
+      },
+    });
+    let finished = false;
+    const request = provider.getDocumentSymbols(editor, {
+      sourceId: "symbol-tree-sitter",
+      timeoutMs: 0,
+    });
+    request.then(() => (finished = true));
+    const timed = provider.getDocumentSymbols(editor, {
+      sourceId: "symbol-tree-sitter",
+      timeoutMs: 5,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(finished).toBe(false);
+    expect(requests[0].signal.aborted).toBe(false);
+    expect(requests[1].signal.aborted).toBe(true);
+    requests[1].resolve([]);
+    await expectAsync(timed).toBeResolvedTo(null);
+    requests[0].resolve([
+      {
+        captures: [
+          { name: "name", node: { id: 1, text: "slowLocal", range: new Range([0, 0], [0, 9]) } },
+        ],
+      },
+    ]);
+    expect((await request).map(({ name }) => name)).toEqual(["slowLocal"]);
+    expect(provider.pendingSymbolRequests.size).toBe(0);
+  });
+
+  it("cancels a local capture request on edit even with its deadline disabled", async () => {
+    let changed;
+    let finishCaptures;
+    let requestedSignal;
+    const editor = queryEditor({
+      onDidChange(callback) {
+        changed = callback;
+        return { dispose() {} };
+      },
+      getGrammarQueryCaptureGroups(_queryType, { signal }) {
+        requestedSignal = signal;
+        return new Promise((resolve) => (finishCaptures = resolve));
+      },
+    });
+    const invalidated = jasmine.createSpy("invalidated");
+    provider.onDidInvalidateDocumentSymbols(invalidated);
+    const request = provider.getDocumentSymbols(editor, {
+      sourceId: "symbol-tree-sitter",
+      timeoutMs: 0,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(requestedSignal.aborted).toBe(false);
+    changed();
+    expect(requestedSignal.aborted).toBe(true);
+    finishCaptures([
+      {
+        captures: [
+          {
+            get node() {
+              throw new Error("stale local capture");
+            },
+          },
+        ],
+      },
+    ]);
+    await expectAsync(request).toBeResolvedTo(null);
+    expect(invalidated).toHaveBeenCalledWith({ editor });
+    expect(provider.pendingSymbolRequests.size).toBe(0);
+  });
+
   it("does not publish capture groups invalidated by a grammar change", async () => {
     let grammarGeneration = 0;
     let finishCaptureRequest;
@@ -756,6 +832,7 @@ describe("TreeSitterProvider", () => {
       shortLabel: "TS",
       score: 0.999,
       state: "ready",
+      execution: "local",
     });
     expect(await readDocumentSymbols(editor)).toEqual([]);
   });

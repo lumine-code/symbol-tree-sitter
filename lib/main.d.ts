@@ -22,12 +22,14 @@ export interface DocumentSymbolProvider {
     shortLabel: "TS";
     score: 0.999;
     state: "ready";
+    execution: "local";
   }>;
   getDocumentSymbols(
     editor: TextEditor,
     options: {
       sourceId: "symbol-tree-sitter";
       signal?: AbortSignal;
+      /** Zero disables the request deadline; buffer changes and AbortSignal still cancel stale extraction. */
       timeoutMs?: number;
     },
   ): Promise<DocumentSymbol[] | null>;

@@ -15,9 +15,11 @@ To install `symbol-tree-sitter` search for it in the Install pane of the Lumine 
 
 ## Services
 
-- `symbol.document-provider@1.0.0`: describes the current buffer's Tree-sitter source through `getDocumentSymbolSources(editor, { signal })` and retrieves it through `getDocumentSymbols(editor, { sourceId, signal, timeoutMs })`. The source has the stable ID `symbol-tree-sitter`, label `TS` and score `0.999`. `onDidInvalidateDocumentSymbols(callback)` reports changes to availability or results.
+- `symbol.document-provider@1.0.0`: describes the current buffer's Tree-sitter source through `getDocumentSymbolSources(editor, { signal })` and retrieves it through `getDocumentSymbols(editor, { sourceId, signal, timeoutMs })`. The source has the stable ID `symbol-tree-sitter`, label `TS`, score `0.999` and `execution: "local"`. `onDidInvalidateDocumentSymbols(callback)` reports changes to availability or results.
 
 Automatic selection allows an available language server to answer first. Choosing Tree-sitter explicitly keeps this buffer on that source; requesting any other source ID returns no answer. A valid empty result stays empty.
+
+Local extraction can finish on large buffers without the language-server request deadline. The symbol hub passes `timeoutMs: 0` for local sources, which disables the timer while keeping cancellation active. Edits, grammar changes, editor destruction and the caller's abort signal still stop stale work.
 
 Tree-sitter stays available for every supported text buffer, including plain text and grammars without symbol queries. Such buffers return an empty symbol list. Injected languages can add symbols after parsing settles, at which point the provider invalidates the buffer's results.
 
