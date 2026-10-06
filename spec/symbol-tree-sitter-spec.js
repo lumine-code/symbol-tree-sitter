@@ -94,7 +94,7 @@ describe("TreeSitterProvider", () => {
         execution: "local",
       },
     ]);
-    expect(await provider.getDocumentSymbols(editor, { sourceId: "ide-client:any" })).toBeNull();
+    expect(await provider.getDocumentSymbols(editor, { sourceId: "ide:any" })).toBeNull();
     expect(await provider.getDocumentSymbols(editor)).toBeNull();
     expect(editor.getGrammarQueryCaptureGroups).not.toHaveBeenCalled();
     provider.destroy();
