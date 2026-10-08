@@ -2,6 +2,8 @@
 
 Provides symbols via Tree-sitter tags queries.
 
+Fork of [pulsar-edit/pulsar](https://github.com/pulsar-edit/pulsar) (`packages/symbol-provider-tree-sitter`).
+
 ## Features
 
 - **Buffer-based symbols**: reads symbols from the live buffer, so they work in new and unsaved files.
