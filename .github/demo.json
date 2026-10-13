@@ -1,0 +1,17 @@
+{
+  "title": "symbol-tree-sitter",
+  "description": "Extract a symbol outline directly from the Tree-sitter syntax tree.",
+  "recordedOn": "2026-10-13",
+  "sourceRevision": "5ae38530fd0b27dbce80756a6b1b8dbfd762f7a8",
+  "mode": "normal",
+  "fontSettings": "default",
+  "themeSourceRevision": "6564a9e21899b5541e9c8f8006f9be6d6d72e6ad",
+  "images": [
+    {
+      "file": "demo.png",
+      "label": "Extract a symbol outline directly from the Tree-sitter syntax tree.",
+      "width": 1100,
+      "height": 730
+    }
+  ]
+}

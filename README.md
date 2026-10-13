@@ -11,6 +11,8 @@ Fork of [pulsar-edit/pulsar](https://github.com/pulsar-edit/pulsar) (`packages/s
 - **Rich symbol shaping**: predicates can prepend, append, strip, and set the context and tag of each symbol.
 - **Optional references**: can include references such as function calls in addition to definitions.
 
+![Extract a symbol outline directly from the Tree-sitter syntax tree.](.github/demo.png)
+
 ## Installation
 
 To install `symbol-tree-sitter` search for it in the Install pane of the Lumine settings, or run the command `lumine --install lumine-code/symbol-tree-sitter`.
