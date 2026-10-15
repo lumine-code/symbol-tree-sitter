@@ -513,9 +513,13 @@ describe("TreeSitterProvider", () => {
     let finishCaptures;
     let requestedSignal;
     const editor = queryEditor({
-      onDidChange(callback) {
-        changed = callback;
-        return { dispose() {} };
+      getBuffer() {
+        return {
+          onDidChangeText(callback) {
+            changed = callback;
+            return { dispose() {} };
+          },
+        };
       },
       getGrammarQueryCaptureGroups(_queryType, { signal }) {
         requestedSignal = signal;
@@ -546,6 +550,54 @@ describe("TreeSitterProvider", () => {
     await expectAsync(request).toBeResolvedTo(null);
     expect(invalidated).toHaveBeenCalledWith({ editor });
     expect(provider.pendingSymbolRequests.size).toBe(0);
+  });
+
+  it("keeps pending capture work when soft wrapping resets only the display layer", async () => {
+    const editor = lumine.workspace.buildTextEditor();
+    editor.setText("function UnchangedSource() {}\n");
+    const originalText = editor.getText();
+    const displayChanged = jasmine.createSpy("display changed");
+    const textChanged = jasmine.createSpy("text changed");
+    const displaySubscription = editor.onDidChange(displayChanged);
+    const textSubscription = editor.getBuffer().onDidChangeText(textChanged);
+    const invalidated = jasmine.createSpy("invalidated");
+    provider.onDidInvalidateDocumentSymbols(invalidated);
+    let release, requestedSignal;
+    spyOn(editor, "getGrammarQueryCaptureGroups").and.callFake((_query, { signal }) => {
+      requestedSignal = signal;
+      return new Promise((resolve) => (release = resolve));
+    });
+    const request = provider.getDocumentSymbols(editor, {
+      sourceId: "symbol-tree-sitter",
+      timeoutMs: 0,
+    });
+    let editedRequest;
+    try {
+      editor.setSoftWrapped(!editor.isSoftWrapped());
+      expect(displayChanged).toHaveBeenCalled();
+      expect(textChanged).not.toHaveBeenCalled();
+      expect(editor.getText()).toBe(originalText);
+      expect(requestedSignal.aborted).toBe(false);
+      expect(invalidated).not.toHaveBeenCalled();
+      release([]);
+      await expectAsync(request).toBeResolvedTo([]);
+      editedRequest = provider.getDocumentSymbols(editor, {
+        sourceId: "symbol-tree-sitter",
+        timeoutMs: 0,
+      });
+      editor.getBuffer().append("// changed source\n");
+      expect(textChanged).toHaveBeenCalledTimes(1);
+      expect(requestedSignal.aborted).toBe(true);
+      expect(invalidated).toHaveBeenCalledOnceWith({ editor });
+      release([]);
+      await expectAsync(editedRequest).toBeResolvedTo(null);
+    } finally {
+      release([]);
+      await Promise.all([request, editedRequest]);
+      displaySubscription.dispose();
+      textSubscription.dispose();
+      editor.destroy();
+    }
   });
 
   it("does not publish capture groups invalidated by a grammar change", async () => {
@@ -636,17 +688,20 @@ describe("TreeSitterProvider", () => {
     provider.destroy();
   });
 
-  for (const event of ["onDidChange", "onDidChangeGrammar", "onDidDestroy"]) {
+  for (const event of ["onDidChangeText", "onDidChangeGrammar", "onDidDestroy"]) {
     it(`discards a request invalidated by ${event} before reading captured nodes`, async () => {
       let cancel;
       let finishCaptures;
       let requestedSignal;
       const disposed = jasmine.createSpy("dispose");
+      const subscribe = (callback) => {
+        cancel = callback;
+        return { dispose: disposed };
+      };
       const editor = queryEditor({
-        [event](callback) {
-          cancel = callback;
-          return { dispose: disposed };
-        },
+        ...(event === "onDidChangeText"
+          ? { getBuffer: () => ({ onDidChangeText: subscribe }) }
+          : { [event]: subscribe }),
         getGrammarQueryCaptureGroups(_queryType, { signal }) {
           requestedSignal = signal;
           return new Promise((resolve) => (finishCaptures = resolve));
@@ -719,9 +774,13 @@ describe("TreeSitterProvider", () => {
       outerController.abort();
     });
     const editor = queryEditor({
-      onDidChange(callback) {
-        changed = callback;
-        return { dispose() {} };
+      getBuffer() {
+        return {
+          onDidChangeText(callback) {
+            changed = callback;
+            return { dispose() {} };
+          },
+        };
       },
       getGrammarQueryCaptureGroups(_queryType, options) {
         signal = options.signal;
