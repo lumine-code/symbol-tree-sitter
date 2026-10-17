@@ -20,7 +20,8 @@
   "types": "./lib/main.d.ts",
   "files": [
     "lib",
-    "spec"
+    "spec",
+    "THIRD_PARTY_NOTICES"
   ],
   "engines": {
     "lumine": "^1.0.0",
