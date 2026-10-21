@@ -1,7 +1,10 @@
 const path = require("path");
 const fs = require("@lumine-code/fs-plus");
 const temp = require("@lumine-code/fs-temp");
-const TreeSitterProvider = require("../lib/tree-sitter-provider");
+let TreeSitterProvider;
+beforeEach(() => {
+  TreeSitterProvider = require("../lib/tree-sitter-provider");
+});
 
 // Just for syntax highlighting.
 function scm(strings) {
@@ -12,13 +15,40 @@ function getEditor() {
   return lumine.workspace.getActiveTextEditor();
 }
 
-const queryEditor = (overrides = {}) => ({
-  hasGrammarQuery: () => true,
-  getGrammar: () => ({}),
-  whenGrammarSettled: () => Promise.resolve(true),
-  getGrammarQueryCaptureGroups: () => Promise.resolve([]),
-  ...overrides,
-});
+async function setQueryForTest(grammar, queryType, contents) {
+  await getEditor().analyzeSyntax(require.resolve("./helpers/query-fixture"), "setQuery", {
+    scopeName: grammar.scopeName,
+    queryType,
+    contents,
+  });
+  await getEditor().whenGrammarSettled();
+}
+
+const queryEditor = (overrides = {}) => {
+  const editor = {
+    hasGrammarQuery: () => true,
+    getGrammar: () => ({}),
+    whenGrammarSettled: () => Promise.resolve(true),
+    getGrammarQueryCaptureGroups: () => Promise.resolve([]),
+    ...overrides,
+  };
+  editor.analyzeSyntax ??= async (modulePath, method, params, { signal, onChunk }) => {
+    try {
+      return await require(modulePath)[method](
+        {
+          getGrammarQueryCaptureGroups: (type) =>
+            editor.getGrammarQueryCaptureGroups(type, { signal }),
+        },
+        params,
+        { signal, emit: onChunk },
+      );
+    } catch (error) {
+      if (signal.aborted || error.name === "AbortError") return null;
+      throw error;
+    }
+  };
+  return editor;
+};
 
 const sourceScore = (provider, editor) => {
   const source = provider.getDocumentSymbolSources(editor)[0];
@@ -43,6 +73,13 @@ describe("TreeSitterProvider", () => {
   afterEach(() => {
     provider?.destroy();
     provider = null;
+    if (editor) {
+      editor.destroy();
+      editor = null;
+      // Test query overrides belong to this owner generation only.
+      lumine.grammars.syntaxWorkerService?.dispose();
+      lumine.grammars.syntaxWorkerService = null;
+    }
   });
 
   it("publishes only the document service and replaces its destroyed generation on reactivation", async () => {
@@ -60,7 +97,7 @@ describe("TreeSitterProvider", () => {
     expect(pkg.mainModule.provideDocumentSymbolProvider().destroyed).toBe(false);
   });
 
-  it("uses only the public editor grammar-query facade", () => {
+  it("uses only the public editor syntax-analysis facade", () => {
     const grammar = {};
     const editor = queryEditor({
       getBuffer() {
@@ -563,7 +600,7 @@ describe("TreeSitterProvider", () => {
     const invalidated = jasmine.createSpy("invalidated");
     provider.onDidInvalidateDocumentSymbols(invalidated);
     let release, requestedSignal;
-    spyOn(editor, "getGrammarQueryCaptureGroups").and.callFake((_query, { signal }) => {
+    spyOn(editor, "analyzeSyntax").and.callFake((_module, _method, _params, { signal }) => {
       requestedSignal = signal;
       return new Promise((resolve) => (release = resolve));
     });
@@ -579,7 +616,7 @@ describe("TreeSitterProvider", () => {
       expect(editor.getText()).toBe(originalText);
       expect(requestedSignal.aborted).toBe(false);
       expect(invalidated).not.toHaveBeenCalled();
-      release([]);
+      release({ count: 0 });
       await expectAsync(request).toBeResolvedTo([]);
       editedRequest = provider.getDocumentSymbols(editor, {
         sourceId: "symbol-tree-sitter",
@@ -589,10 +626,10 @@ describe("TreeSitterProvider", () => {
       expect(textChanged).toHaveBeenCalledTimes(1);
       expect(requestedSignal.aborted).toBe(true);
       expect(invalidated).toHaveBeenCalledOnceWith({ editor });
-      release([]);
+      release({ count: 0 });
       await expectAsync(editedRequest).toBeResolvedTo(null);
     } finally {
-      release([]);
+      release?.({ count: 0 });
       await Promise.all([request, editedRequest]);
       displaySubscription.dispose();
       textSubscription.dispose();
@@ -621,9 +658,6 @@ describe("TreeSitterProvider", () => {
       },
     });
     const provider = new TreeSitterProvider();
-    spyOn(provider.captureOrganizer, "process").and.returnValue([
-      { name: "stale", position: { compare: () => 0 } },
-    ]);
     const controller = new AbortController();
 
     const symbolsPromise = provider.getDocumentSymbols(editor, {
@@ -637,54 +671,58 @@ describe("TreeSitterProvider", () => {
     finishCaptureRequest();
 
     await expectAsync(symbolsPromise).toBeResolvedTo(null);
-    expect(provider.captureOrganizer.process).not.toHaveBeenCalled();
     provider.destroy();
   });
 
   it("collects captures from root and injected grammar groups", async () => {
-    const rootSymbol = { name: "root", position: { compare: () => -1 } };
-    const injectedSymbol = { name: "injected", position: { compare: () => 1 } };
-    const rootCaptures = [{ symbol: rootSymbol }];
-    const injectedCaptures = [{ symbol: injectedSymbol }];
+    const { Range } = require("lumine");
+    const rootCaptures = [
+      { name: "name", node: { id: 1, text: "root", range: new Range([0, 0], [0, 4]) } },
+    ];
+    const injectedCaptures = [
+      { name: "name", node: { id: 2, text: "injected", range: new Range([2, 0], [2, 8]) } },
+    ];
     const editor = queryEditor({
       getGrammarQueryCaptureGroups: () =>
         Promise.resolve([{ captures: injectedCaptures }, { captures: rootCaptures }]),
     });
     const provider = new TreeSitterProvider();
-    spyOn(provider.captureOrganizer, "process").and.callFake((captures) =>
-      captures.map(({ symbol }) => symbol),
-    );
-
     const symbols = await provider.getDocumentSymbols(editor, {
       sourceId: "symbol-tree-sitter",
       signal: new AbortController().signal,
     });
-
-    expect(provider.captureOrganizer.process.calls.allArgs()).toEqual([
-      [injectedCaptures],
-      [rootCaptures],
+    expect(symbols.map(({ name }) => name)).toEqual(["root", "injected"]);
+    expect(symbols.map(({ position }) => position.serialize())).toEqual([
+      [0, 0],
+      [2, 0],
     ]);
-    expect(symbols).toEqual([rootSymbol, injectedSymbol]);
     provider.destroy();
   });
 
   it("collects a file with more symbols than the function argument limit", async () => {
-    const { Point } = require("lumine");
+    const { Point, Range } = require("lumine");
+    const { encode } = require("../lib/symbol-packets");
     const expected = Array.from({ length: 200000 }, (_, row) => ({
       name: `command-${row}`,
       position: new Point(row, 0),
+      range: new Range([row, 0], [row, 1]),
     }));
     const editor = queryEditor({
-      getGrammarQueryCaptureGroups: () => Promise.resolve([{ captures: [] }]),
+      async analyzeSyntax(_module, _method, _params, { onChunk }) {
+        const dictionary = new Map();
+        for (let start = 0; start < expected.length; start += 256)
+          await onChunk(
+            encode(expected, start, Math.min(start + 256, expected.length), dictionary),
+          );
+        return { count: expected.length };
+      },
     });
     const provider = new TreeSitterProvider();
-    spyOn(provider.captureOrganizer, "process").and.returnValue(expected);
-
     const symbols = await provider.getDocumentSymbols(editor, { sourceId: "symbol-tree-sitter" });
-
     expect(symbols.length).toBe(expected.length);
-    expect(symbols[0]).toBe(expected[0]);
-    expect(symbols.at(-1)).toBe(expected.at(-1));
+    expect(symbols[0]).toEqual(expected[0]);
+    expect(symbols.at(-1)).toEqual(expected.at(-1));
+    expect(symbols[0]).not.toBe(expected[0]);
     provider.destroy();
   });
 
@@ -862,6 +900,21 @@ describe("TreeSitterProvider", () => {
       expect(symbols[1].name).toBe("sort");
       expect(symbols[1].position.row).toEqual(1);
     });
+
+    it("invalidates symbols when the owner reloads a tags query without a source edit", async () => {
+      await readDocumentSymbols(editor);
+      const revision = editor.getBuffer().getTextRevision();
+      const invalidate = jasmine.createSpy("invalidate");
+      const subscription = provider.onDidInvalidateDocumentSymbols(invalidate);
+      try {
+        await setQueryForTest(editor.getGrammar(), "tagsQuery", "");
+        await conditionPromise(() => invalidate.calls.count() > 0);
+        expect(editor.getBuffer().getTextRevision()).toBe(revision);
+        expect(await readDocumentSymbols(editor)).toEqual([]);
+      } finally {
+        subscription.dispose();
+      }
+    });
   });
 
   describe("when the parserless sentinel grammar is used for a file", () => {
@@ -948,10 +1001,11 @@ describe("TreeSitterProvider", () => {
 
     it("detects symbols across several layers", async () => {
       expect(editor.hasGrammarQuery("tagsQuery")).toBe(true);
-      const groups = await editor.getGrammarQueryCaptureGroups("tagsQuery");
-      expect(groups.map(({ grammar }) => grammar.scopeName)).toEqual(
-        jasmine.arrayWithExactContents(["source.ruby", "source.js"]),
+      const layers = await editor.analyzeSyntax(
+        require.resolve("./helpers/query-fixture"),
+        "layers",
       );
+      expect(layers).toEqual(jasmine.arrayWithExactContents(["source.ruby", "source.js"]));
 
       let symbols = await readDocumentSymbols(editor);
 
@@ -970,7 +1024,8 @@ describe("TreeSitterProvider", () => {
       editor = getEditor();
       await editor.whenGrammarSettled();
       grammar = editor.getGrammar();
-      await grammar.setQueryForTest(
+      await setQueryForTest(
+        grammar,
         "tagsQuery",
         scm`
         (
@@ -1001,7 +1056,8 @@ describe("TreeSitterProvider", () => {
       editor = getEditor();
       await editor.whenGrammarSettled();
       grammar = editor.getGrammar();
-      await grammar.setQueryForTest(
+      await setQueryForTest(
+        grammar,
         "tagsQuery",
         scm`
         (
@@ -1043,7 +1099,8 @@ describe("TreeSitterProvider", () => {
 
     describe("symbol.context", () => {
       beforeEach(async () => {
-        await grammar.setQueryForTest(
+        await setQueryForTest(
+          grammar,
           "tagsQuery",
           scm`
           (
@@ -1070,7 +1127,8 @@ describe("TreeSitterProvider", () => {
 
     describe("symbol.contextNode", () => {
       beforeEach(async () => {
-        await grammar.setQueryForTest(
+        await setQueryForTest(
+          grammar,
           "tagsQuery",
           scm`
           (
@@ -1097,7 +1155,8 @@ describe("TreeSitterProvider", () => {
 
     describe("symbol.icon", () => {
       it("defines an `icon` property on each symbol", async () => {
-        await grammar.setQueryForTest(
+        await setQueryForTest(
+          grammar,
           "tagsQuery",
           scm`
           (
@@ -1122,7 +1181,8 @@ describe("TreeSitterProvider", () => {
       });
 
       it("supersedes an `icon` property assigned by a tag", async () => {
-        await grammar.setQueryForTest(
+        await setQueryForTest(
+          grammar,
           "tagsQuery",
           scm`
           (
@@ -1146,7 +1206,8 @@ describe("TreeSitterProvider", () => {
       });
 
       it("supersedes an `icon` property inferred by its container", async () => {
-        await grammar.setQueryForTest(
+        await setQueryForTest(
+          grammar,
           "tagsQuery",
           scm`
           (
@@ -1172,7 +1233,8 @@ describe("TreeSitterProvider", () => {
 
     describe("symbol.tag", () => {
       it("defines a `tag` property on each symbol", async () => {
-        await grammar.setQueryForTest(
+        await setQueryForTest(
+          grammar,
           "tagsQuery",
           scm`
           (
@@ -1197,7 +1259,8 @@ describe("TreeSitterProvider", () => {
       });
 
       it("supersedes the `tag` property inferred by its container", async () => {
-        await grammar.setQueryForTest(
+        await setQueryForTest(
+          grammar,
           "tagsQuery",
           scm`
           (
@@ -1224,7 +1287,8 @@ describe("TreeSitterProvider", () => {
 
     describe("symbol.strip", () => {
       beforeEach(async () => {
-        await grammar.setQueryForTest(
+        await setQueryForTest(
+          grammar,
           "tagsQuery",
           scm`
           (
@@ -1250,7 +1314,8 @@ describe("TreeSitterProvider", () => {
 
     describe("symbol.prepend", () => {
       beforeEach(async () => {
-        await grammar.setQueryForTest(
+        await setQueryForTest(
+          grammar,
           "tagsQuery",
           scm`
           (
@@ -1276,7 +1341,8 @@ describe("TreeSitterProvider", () => {
 
     describe("symbol.append", () => {
       beforeEach(async () => {
-        await grammar.setQueryForTest(
+        await setQueryForTest(
+          grammar,
           "tagsQuery",
           scm`
           (
@@ -1303,7 +1369,8 @@ describe("TreeSitterProvider", () => {
 
     describe("symbol.prependTextForNode", () => {
       beforeEach(async () => {
-        await grammar.setQueryForTest(
+        await setQueryForTest(
+          grammar,
           "tagsQuery",
           scm`
           (
@@ -1338,7 +1405,8 @@ describe("TreeSitterProvider", () => {
 
     describe("symbol.prependSymbolForNode", () => {
       beforeEach(async () => {
-        await grammar.setQueryForTest(
+        await setQueryForTest(
+          grammar,
           "tagsQuery",
           scm`
           ; Outer function has prepended text...
