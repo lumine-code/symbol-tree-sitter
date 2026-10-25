@@ -140,7 +140,7 @@ describe("TreeSitterProvider", () => {
   it("keeps Tree-sitter ready when this grammar has no tags query", () => {
     const editor = queryEditor({
       hasGrammarQuery: () => false,
-      getGrammar: () => lumine.grammars.nullGrammar,
+      getGrammar: () => ({}),
       whenGrammarSettled() {},
       getGrammarQueryCaptureGroups() {},
     });
@@ -247,7 +247,7 @@ describe("TreeSitterProvider", () => {
     });
     const provider = new TreeSitterProvider();
 
-    expect(sourceScore(provider, editor)).toBe(0.999);
+    expect(sourceScore(provider, editor)).toBe(false);
     expect(whenGrammarSettled).not.toHaveBeenCalled();
     provider.destroy();
     expect(sourceScore(provider, editor)).toBe(false);
@@ -858,6 +858,9 @@ describe("TreeSitterProvider", () => {
   beforeEach(async () => {
     jasmine.useRealClock();
 
+    const plainText = await lumine.packages.activatePackage("language-text");
+    await plainText.resourceLoadPromise;
+
     await lumine.packages.activatePackage("language-javascript");
 
     lumine.config.set("symbol-tree-sitter.includeReferences", false);
@@ -924,17 +927,18 @@ describe("TreeSitterProvider", () => {
       editor.setGrammar(lumine.grammars.nullGrammar);
     });
 
-    it("keeps the source ready and returns an empty list for the current file", async () => {
+    it("declines the source without invoking syntax analysis", async () => {
       expect(editor.getGrammar()).toBe(lumine.grammars.nullGrammar);
-
-      expect(sourceScore(provider, editor)).toBe(0.999);
-      expect(await readDocumentSymbols(editor)).toEqual([]);
+      const analyze = spyOn(editor, "analyzeSyntax").and.callThrough();
+      expect(sourceScore(provider, editor)).toBe(false);
+      expect(await readDocumentSymbols(editor)).toBeNull();
+      expect(analyze).not.toHaveBeenCalled();
     });
   });
 
   it("keeps a real plain-text buffer selectable and treats no queries as a valid empty answer", async () => {
     const editor = await lumine.workspace.open();
-    editor.setGrammar(lumine.grammars.nullGrammar);
+    editor.setGrammar(lumine.grammars.grammarForScopeName("text.plain"));
     editor.setText("There are no declarations or parser queries here.");
     expect(editor.hasGrammarQuery("tagsQuery")).toBe(false);
     const source = provider.getDocumentSymbolSources(editor)[0];
