@@ -97,6 +97,24 @@ describe("TreeSitterProvider", () => {
     expect(pkg.mainModule.provideDocumentSymbolProvider().destroyed).toBe(false);
   });
 
+  it("declines failed syntax before querying and resumes after syntax recovers", async () => {
+    let available = false;
+    const editor = queryEditor({
+      getSyntaxAvailability: () => ({ available, reason: available ? null : "failure" }),
+      hasGrammarQuery: jasmine.createSpy("query").and.returnValue(true),
+      analyzeSyntax: jasmine.createSpy("analysis").and.resolveTo({ count: 0 }),
+    });
+    provider = new TreeSitterProvider();
+    expect(provider.getDocumentSymbolSources(editor)).toEqual([]);
+    expect(await readDocumentSymbols(editor)).toBeNull();
+    expect(editor.hasGrammarQuery).not.toHaveBeenCalled();
+    expect(editor.analyzeSyntax).not.toHaveBeenCalled();
+    available = true;
+    expect(provider.getDocumentSymbolSources(editor).length).toBe(1);
+    expect(await readDocumentSymbols(editor)).toEqual([]);
+    expect(editor.analyzeSyntax).toHaveBeenCalledTimes(1);
+  });
+
   it("uses only the public editor syntax-analysis facade", () => {
     const grammar = {};
     const editor = queryEditor({
