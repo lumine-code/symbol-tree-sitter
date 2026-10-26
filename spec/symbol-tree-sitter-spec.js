@@ -36,8 +36,12 @@ const queryEditor = (overrides = {}) => {
     try {
       return await require(modulePath)[method](
         {
-          getGrammarQueryCaptureGroups: (type) =>
-            editor.getGrammarQueryCaptureGroups(type, { signal }),
+          async *scanGrammarQueryCaptures(type) {
+            const groups = await editor.getGrammarQueryCaptureGroups(type, { signal });
+            for (let layerId = 0; layerId < groups.length; layerId++) {
+              yield { ...groups[layerId], layerId, last: true };
+            }
+          },
         },
         params,
         { signal, emit: onChunk },
