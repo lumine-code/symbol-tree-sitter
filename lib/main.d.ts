@@ -33,6 +33,15 @@ export interface DocumentSymbolProvider {
       timeoutMs?: number;
     },
   ): Promise<DocumentSymbol[] | null>;
+  getDocumentSymbolPath(
+    editor: TextEditor,
+    position: Point | [number, number] | { row: number; column: number },
+    options: {
+      sourceId: "symbol-tree-sitter";
+      signal?: AbortSignal;
+      timeoutMs?: number;
+    },
+  ): Promise<DocumentSymbol[] | null>;
   /** A null editor invalidates every document after grammar or configuration changes. */
   onDidInvalidateDocumentSymbols(
     callback: (event: { editor: TextEditor | null }) => void,

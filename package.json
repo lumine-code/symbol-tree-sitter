@@ -49,7 +49,7 @@
     "symbol.document-provider": {
       "description": "Supplies symbols from the current document's Tree-sitter queries.",
       "versions": {
-        "1.0.0": "provideDocumentSymbolProvider"
+        "1.1.0": "provideDocumentSymbolProvider"
       }
     }
   },

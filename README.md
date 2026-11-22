@@ -19,7 +19,7 @@ To install `symbol-tree-sitter` search for it in the Install pane of the Lumine 
 
 ## Services
 
-- `symbol.document-provider@1.0.0`: describes the current buffer's Tree-sitter source through `getDocumentSymbolSources(editor, { signal })` and retrieves it through `getDocumentSymbols(editor, { sourceId, signal, timeoutMs })`. The source has the stable ID `symbol-tree-sitter`, label `TS`, score `0.999` and `execution: "local"`. `onDidInvalidateDocumentSymbols(callback)` reports changes to availability or results.
+- `symbol.document-provider@1.1.0` describes the current buffer's Tree-sitter source through `getDocumentSymbolSources(editor, { signal })` and retrieves it through `getDocumentSymbols(editor, { sourceId, signal, timeoutMs })`. The source has the stable ID `symbol-tree-sitter`, label `TS`, score `0.999` and `execution: "local"`. `onDidInvalidateDocumentSymbols(callback)` reports changes to availability or results.
 
 Automatic selection allows an available language server to answer first. Choosing Tree-sitter explicitly keeps this buffer on that source; requesting any other source ID returns no answer. A valid empty result stays empty.
 
@@ -28,6 +28,8 @@ Local extraction can finish on large buffers without the language-server request
 Tree-sitter stays available for every supported text buffer, including plain text and grammars without symbol queries. Such buffers return an empty symbol list. Injected languages can add symbols after parsing settles, at which point the provider invalidates the buffer's results.
 
 Symbols come from the editor's public grammar-query API, including injected languages. Buffer changes cancel stale work, and grammar or configuration changes invalidate cached document results. This provider performs no project scan and offers no workspace search or definition lookup.
+
+`getDocumentSymbolPath(editor, position, request)` reads only the tags matches that can contain the cursor in participating language layers. A grammar opts in with `treeSitter.tagsQuerySupportsLocalPath` after verifying that declaration and reference ranges, names and capture conditions can be resolved from their own matches with the same results as a full scan. Queries that depend on symbols in a separate match should use the regular document scan. Crossing or equal ranges that make the hierarchy ambiguous, and positions that need a search for the nearest previous symbol, also use the full provider.
 
 ## Contributing
 

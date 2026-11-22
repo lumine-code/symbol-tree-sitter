@@ -86,6 +86,42 @@ describe("TreeSitterProvider", () => {
     }
   });
 
+  it("requests one point via the syntax facade and restores the returned coordinates", async () => {
+    const analyzeSyntax = jasmine.createSpy("analyzeSyntax").and.resolveTo([
+      {
+        name: "inside",
+        position: [1, 2],
+        range: [
+          [1, 2],
+          [4, 1],
+        ],
+      },
+    ]);
+    const host = queryEditor({
+      getGrammar: () => ({ queryPaths: { tagsQuerySupportsLocalPath: true } }),
+      analyzeSyntax,
+    });
+    provider = new TreeSitterProvider();
+    const path = await provider.getDocumentSymbolPath(host, [2, 4], {
+      sourceId: "symbol-tree-sitter",
+    });
+    expect(analyzeSyntax).toHaveBeenCalledTimes(1);
+    expect(analyzeSyntax.calls.mostRecent().args.slice(0, 3)).toEqual([
+      require.resolve("../lib/syntax-analysis"),
+      "symbolPath",
+      { position: [2, 4] },
+    ]);
+    expect(analyzeSyntax.calls.mostRecent().args[3].signal.aborted).toBeFalse();
+    expect(path[0].position.isEqual([1, 2])).toBeTrue();
+    expect(
+      path[0].range.isEqual([
+        [1, 2],
+        [4, 1],
+      ]),
+    ).toBeTrue();
+    expect(await provider.getDocumentSymbolPath(host, [2, 4], { sourceId: "foreign" })).toBeNull();
+  });
+
   it("publishes only the document service and replaces its destroyed generation on reactivation", async () => {
     let pkg = await lumine.packages.activatePackage("symbol-tree-sitter");
     const first = pkg.mainModule.provideDocumentSymbolProvider();
